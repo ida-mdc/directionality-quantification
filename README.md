@@ -1,7 +1,7 @@
 # Cell Extension Orientation
 
 ## How to install
-
+Tested with Python 3.11.
 ```
 git clone https://gitlab.com/ida-mdc/cell-extension-orientation.git
 cd cell-extension-orientation
