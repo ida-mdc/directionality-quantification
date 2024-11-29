@@ -3,8 +3,8 @@
 ## How to install
 Tested with Python 3.11.
 ```
-git clone https://gitlab.com/ida-mdc/cell-extension-orientation.git
-cd cell-extension-orientation
+git clone https://gitlab.com/ida-mdc/directionality-quantification.git
+cd directionality-quantification
 pip install -e .
 ```
 
@@ -19,7 +19,7 @@ cell-extension-orientation --help
 Example use case:
 
 ```
-cell-extension-orientation --input_raw sample/input_raw.tif --input_labeling sample/input_labels.tif --input_target 
+directionality-quantification --input_raw sample/input_raw.tif --input_labeling sample/input_labels.tif --input_target 
 sample/input_target.tif --output sample/result --pixel_in_micron 0.65 --output_res 7:10
 ```
 

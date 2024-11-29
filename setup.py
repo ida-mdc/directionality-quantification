@@ -1,10 +1,10 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="cell_extension_orientation",
+    name="directionality_quantification",
     version="0.1.0",
     author="Sindi Nexhipi, Deborah Schmidt",
-    description="Package for cell extension orientation analysis",
+    description="Package for cell directionality quantification.",
     packages=find_packages(),
     python_requires=">=3.11",
     install_requires=[
@@ -19,7 +19,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'cell-extension-orientation=cell_extension_orientation.main:run',
+            'directionality-quantification=directionality_quantification.main:run',
         ],
     },
 )
