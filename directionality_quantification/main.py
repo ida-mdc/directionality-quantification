@@ -97,23 +97,9 @@ def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size,
     segmentation = labeled > 0
     regions = regionprops(label_image=labeled, intensity_image=segmentation)
 
-    # sort out regions which are too big
-    max_area = max_size
-    if max_area:
-        regions = [region for region in regions if region.area < int(max_area)]
-        region_count = len(regions)
-        print(
-            "Ignored %s labels because their region is bigger than %s pixels" % (n_components - region_count, max_area))
-        n_components = region_count
+    regions = filter_regions_by_size(min_size, max_size, n_components, regions)
 
-    # sort out regions which are too small
-    min_area = min_size
-    if min_area:
-        regions = [region for region in regions if region.area >= int(min_area)]
-        region_count = len(regions)
-        print("Ignored %s labels because their region is smaller than %s pixels" % (
-            n_components - region_count, min_area))
-        n_components = region_count
+    n_components = len(regions)
 
     cell_table_content = None
     if cell_table:
@@ -199,10 +185,6 @@ def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size,
             absolute_angle = angle_between((0, 1), mean_outside)
             rolling_ball_angle = angle_between((0, 1), target_vector)
 
-        #     pca = PCA(n_components=2)
-        #     pca.fit(pixel_locations_relevant_to_direction)
-        #     print(pca.components_)
-        #     arrows.append([center_translated, pca.components_])
         else:
             if min_length_orientation and float(min_length_orientation) > 0:
                 count_no_extensions += 1
@@ -224,6 +206,24 @@ def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size,
             count_not_moving, min_length_orientation))
     print("Ignored %s labels because they don't have extensions" % count_no_extensions)
     return np.array(arrows), labeled_result, cell_table_content
+
+
+def filter_regions_by_size(min_size, max_size, n_components, regions):
+    # sort out regions which are too big
+    max_area = max_size
+    if max_area:
+        regions = [region for region in regions if region.area < int(max_area)]
+        region_count = len(regions)
+        print(
+            "Ignored %s labels because their region is bigger than %s pixels" % (n_components - region_count, max_area))
+    # sort out regions which are too small
+    min_area = min_size
+    if min_area:
+        regions = [region for region in regions if region.area >= int(min_area)]
+        region_count = len(regions)
+        print("Ignored %s labels because their region is smaller than %s pixels" % (
+            n_components - region_count, min_area))
+    return regions
 
 
 def angle_between(v1, v2):
