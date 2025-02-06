@@ -3,9 +3,7 @@
 ## How to install
 Tested with Python 3.11.
 ```
-git clone https://gitlab.com/ida-mdc/directionality-quantification.git
-cd directionality-quantification
-pip install -e .
+pip install directionality-quantification
 ```
 
 ## How to use
@@ -13,7 +11,7 @@ pip install -e .
 List arguments:
 
 ```
-cell-extension-orientation --help
+directionality-quantification --help
 ```
 
 Example use case:
@@ -115,3 +113,4 @@ For each segmented region:
 
 3. **ROIs (`ROIs.png`)**:
    - Highlights the selected regions of interest with color-coded bounding boxes.
+

@@ -12,7 +12,7 @@ class TestCellExtensionOrientation(unittest.TestCase):
     def test_example_run(self):
         # Run the command from the README example
         result = subprocess.run([
-            "cell-extension-orientation",
+            "directionality-quantification",
             "--input_raw", "sample/input_raw.tif",
             "--input_labeling", "sample/input_labels.tif",
             "--input_target", "sample/input_target.tif",

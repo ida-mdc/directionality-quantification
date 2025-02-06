@@ -1,12 +1,11 @@
 import argparse
-import warnings
+import math
 from pathlib import Path
 
 import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 import tifffile
-from matplotlib import MatplotlibDeprecationWarning
 from matplotlib import cm
 from matplotlib import patches
 from matplotlib import pyplot as plt
@@ -61,8 +60,6 @@ def run():
         image_target_mask = tifffile.imread(args.input_target).astype(bool)
         image_target = ndimage.distance_transform_edt(np.invert(image_target_mask))
 
-    cell_table = args.input_table
-
     # crop input images to ROI
     roi, additional_rois = get_roi(args.roi, image)  # returns array with [min_x, max_x, min_y, max_y]
     image = image[roi[2]:roi[3], roi[0]:roi[1]]
@@ -72,7 +69,7 @@ def run():
         image_target_mask = image_target_mask[roi[2]:roi[3], roi[0]:roi[1]]
 
     # analyze the segments, get resulting directions and an image labeled based on the analysis
-    directions, labeled_result, cell_table_content = analyze_segments(image, roi, image_target, cell_table, args.min_size, args.max_size, args.min_length_orientation, args.output)
+    directions, labeled_result, cell_table_content = analyze_segments(image, roi, image_target, args.min_size, args.max_size, args.min_length_orientation, args.output)
 
     plot(directions, image_raw, labeled_result, roi, additional_rois, image_target_mask, pixel_in_micron, args.tiles, args.output, args.output_res)
 
@@ -82,10 +79,10 @@ def write_table(cell_table_content, output):
         if output:
             output = Path(output)
             output.mkdir(parents=True, exist_ok=True)
-            cell_table_content.to_csv(output.joinpath("cells.csv"))
+            pd.DataFrame(data=cell_table_content).to_csv(output.joinpath("cells.csv"))
 
 
-def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size, min_length_orientation, output):
+def analyze_segments(labeled, roi, image_target, min_size, max_size, min_length_orientation, output):
     # obtain labels
     print("Labeling segmentation..")
     n_components = np.max(labeled)
@@ -101,14 +98,24 @@ def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size,
 
     n_components = len(regions)
 
-    cell_table_content = None
-    if cell_table:
-        # TODO check if CSV or EXCEL and support both
-        cell_table_content = pd.read_excel(cell_table, index_col=0)
-        cell_table_content["length_cell_vector"] = ""
-        cell_table_content["absolute_angle"] = ""
-        cell_table_content["rolling_ball_angle"] = ""
-        cell_table_content["relative_angle"] = ""
+    cell_table_content = {
+        "Label": {},
+        "Area": {},
+        "Mean": {},
+        "XM": {},
+        "YM": {},
+        "XM.": {},
+        "%Area": {},
+        "AR": {},
+        "Circ.": {},
+        "Round": {},
+        "Solidity": {},
+        "MScore": {},
+        "length_cell_vector": {},
+        "absolute_angle": {},
+        "rolling_ball_angle": {},
+        "relative_angle": {},
+    }
 
     # iterate over remaining regions
     arrows = []
@@ -120,6 +127,20 @@ def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size,
     for index, region in enumerate(regions):
         if index % 100 == 0:
             print('%s/%s...' % (index, n_components))
+
+        # write regionprops into table
+        # cell_table_content["Label"] = ""
+        cell_table_content["Area"][region.label] = region.area
+        cell_table_content["Mean"][region.label] = region.intensity_mean
+        cell_table_content["XM"][region.label] = region.centroid[1]
+        cell_table_content["YM"][region.label] = region.centroid[0]
+        circularity = 4 * math.pi * region.area / math.pow(region.perimeter, 2)
+        cell_table_content["Circ."][region.label] = circularity
+        cell_table_content["%Area"][region.label] = region.area / region.area_filled * 100
+        # cell_table_content["AR"][region.label] = ""
+        # cell_table_content["Round"][region.label] = ""
+        # cell_table_content["Solidity"][region.label] = ""
+        cell_table_content["MScore"][region.label] = circularity * ((cell_table_content["Area"][region.label] - 27) / 27)
 
         # skeletonize
         skeleton = skeletonize(region.intensity_image)
@@ -193,11 +214,10 @@ def analyze_segments(labeled, roi, image_target, cell_table, min_size, max_size,
 
                 count_considered += 1
 
-        if cell_table_content is not None:
-            cell_table_content.loc[matched_row, "length_cell_vector"] = length_cell_vector
-            cell_table_content.loc[matched_row, "absolute_angle"] = absolute_angle
-            cell_table_content.loc[matched_row, "rolling_ball_angle"] = rolling_ball_angle
-            cell_table_content.loc[matched_row, "relative_angle"] = relative_angle
+        cell_table_content["length_cell_vector"][region.label] = length_cell_vector
+        cell_table_content["absolute_angle"][region.label] = absolute_angle
+        cell_table_content["rolling_ball_angle"][region.label] = rolling_ball_angle
+        cell_table_content["relative_angle"][region.label] = relative_angle
 
     write_table(cell_table_content, output)
 
@@ -467,16 +487,9 @@ def plot_all_directions(output, output_res, directions, bg_image, roi, additiona
 
 
 def generate_target_contour(image_target_mask):
-    contour = plt.contourf(image_target_mask, 1, hatches=['', 'O'], origin='upper')
-    colors = ['black', (1, 0, 0.2, 1)]
-    facecolors = [(0, 0, 0, 0), (0, 1, 0, 0)]
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", MatplotlibDeprecationWarning)
-        for i, collection in enumerate(contour.collections):
-            collection.set_edgecolor(colors[i])
-            collection.set_facecolor(facecolors[i])
-    contour.set_linewidth(0.)
-    return contour
+    plt.contour(image_target_mask, 1, origin='upper', colors='red')
+    cs = plt.contourf(image_target_mask, 1, hatches=['', 'O'], origin='upper', colors='none')
+    cs.set_edgecolor((1, 0, 0.2, 1))
 
 
 def adjust_to_region(data_height, region, region_color, scalebar):
