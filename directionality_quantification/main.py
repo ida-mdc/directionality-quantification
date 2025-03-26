@@ -85,10 +85,18 @@ def write_table(cell_table_content, output):
 def analyze_segments(labeled, roi, image_target, min_size, max_size, min_length_orientation, output):
     # obtain labels
     print("Labeling segmentation..")
-    n_components = np.max(labeled)
-    if n_components == 1:
-        labeled, n_components = label(labeled, return_num=True)
-    print(f'%s objects detected.' % n_components)
+
+    # Heuristic: if the image has only two unique values and one is 0, assume it's a binary mask
+    unique_vals = np.unique(labeled)
+    if len(unique_vals) == 2 and 0 in unique_vals:
+        # Binary mask case (e.g., 0 and 255)
+        binary_mask = labeled != 0  # Covers 255 or 1 as foreground
+        labeled, n_components = label(binary_mask, return_num=True)
+
+    else:
+        n_components = len(unique_vals)
+
+    print(f'{n_components} objects detected.')
 
     # calculate region properties
     segmentation = labeled > 0
