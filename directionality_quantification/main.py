@@ -3,6 +3,7 @@ import math
 from pathlib import Path
 
 import matplotlib.patches as mpatches
+import numpy as np
 import pandas as pd
 import tifffile
 from matplotlib import cm
@@ -226,7 +227,63 @@ def filter_regions_by_size(min_size, max_size, n_components, regions):
     return regions
 
 
-import numpy as np
+def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask, color="black"):
+    """
+    Returns a DataFrame with one row per tile:
+      columns: ["tile_x","tile_y","x","y","u","v","count",
+                "tile_size","color","mode"]
+    - (x,y): tile anchor (same as used in plot_grid)
+    - (u,v): averaged direction values per tile
+    - count: number of cells contributing to the tile
+    - mode: "relative" if target mask given, else "absolute"
+    """
+    tiles_num_x = int(shape[0] / tile_size) + 1
+    tiles_num_y = int(shape[1] / tile_size) + 1
+
+    # Integer bin indices per cell
+    ix = ((cell_table["X center biggest circle"] - crop_extend[0]) // tile_size).astype(int)
+    iy = ((shape[1] - cell_table["Y center biggest circle"] - crop_extend[2]) // tile_size).astype(int)
+
+    mean_length = float(np.nanmean(cell_table["Length cell vector"])) if len(cell_table) else 0.0
+    if mean_length == 0 or np.isnan(mean_length):
+        mean_length = 1.0
+
+    rows = []
+    mode = "relative" if image_target_mask is not None else "absolute"
+
+    for tile_x, tile_y in np.ndindex(tiles_num_x, tiles_num_y):
+        # Tile anchor positions (match your plot_grid usage)
+        x = int(tile_x * tile_size + crop_extend[0])
+        y = int(tile_y * tile_size + crop_extend[2])
+
+        mask = (ix == tile_x) & (iy == tile_y)
+        if not mask.any():
+            rows.append({
+                "tile_x": tile_x, "tile_y": tile_y, "x": x, "y": y,
+                "u": 0.0, "v": 0.0, "count": 0,
+                "tile_size": tile_size, "color": color, "mode": mode
+            })
+            continue
+
+        idx = np.where(mask.to_numpy())[0]
+
+        if image_target_mask is not None:
+            rel = cell_table.loc[idx, "Relative angle"].to_numpy()
+            L   = cell_table.loc[idx, "Length cell vector"].to_numpy()
+            u = float(np.nanmean((np.pi - np.abs(rel)) * (L / mean_length)))
+            v = float(np.nansum(L) / idx.size)  # avg length in tile
+        else:
+            u = -float(np.nanmean(cell_table.loc[idx, "DX"]))
+            v = -float(np.nanmean(cell_table.loc[idx, "DY"]))
+
+        rows.append({
+            "tile_x": tile_x, "tile_y": tile_y, "x": x, "y": y,
+            "u": u, "v": v, "count": int(idx.size),
+            "tile_size": tile_size, "color": color, "mode": mode
+        })
+
+    return pd.DataFrame(rows)
+
 
 
 def angle_between(v1, v2):
@@ -275,56 +332,99 @@ def write_table(cell_table_content: DataFrame, output):
             output.mkdir(parents=True, exist_ok=True)
             cell_table_content.to_csv(output.joinpath("cells.csv"))
 
-def plot(cell_table: DataFrame, raw_image, label_image, roi, additional_rois, image_target_mask, pixel_in_micron, tiles, output, output_res):
+def plot(cell_table: DataFrame, raw_image, label_image, roi, additional_rois,
+         image_target_mask, pixel_in_micron, tiles, output, output_res):
+
     if output:
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
-    output_res = output_res.split(':')
-    output_res = [int(output_res[0]), int(output_res[1])]
+
+    W, H = int(output_res.split(':')[0]), int(output_res.split(':')[1])
+    output_res = [W, H]
+
     roi_colors = []
     if len(additional_rois) > 0:
         roi_colors = plot_rois(output, output_res, label_image, roi, additional_rois)
-    plot_all_directions(output, output_res, cell_table, label_image, roi, additional_rois, roi_colors, image_target_mask, pixel_in_micron)
+
+    plot_all_directions(output, output_res, cell_table, label_image, roi,
+                        additional_rois, roi_colors, image_target_mask, pixel_in_micron)
+
+    # Build + save + plot for each tile size
     for tile in tiles.split(','):
-        plot_average_directions(output, output_res, cell_table, raw_image, roi, additional_rois, roi_colors,
-                                tile_size=int(tile), image_target_mask=image_target_mask, pixel_in_micron=pixel_in_micron)
+        tile_size = int(tile)
+
+        # 1) BUILD the table
+        avg_df = build_average_directions_table(
+            cell_table=cell_table,
+            shape=raw_image.shape,
+            crop_extend=roi,
+            tile_size=tile_size,
+            image_target_mask=image_target_mask,
+            color="black"  # or pick from roi_colors if you want per-ROI variants
+        )
+
+        # 2) SAVE the table
+        if output:
+            avg_csv = output.joinpath(f'average_directions_tile{tile_size}.csv')
+            avg_df.to_csv(avg_csv, index=False)
+            print(f"Saved average directions table: {avg_csv}")
+
+        # 3) PLOT from the table
+        scalebar = plot_average_directions(
+            output=output, output_res=output_res, avg_df=avg_df,
+            bg_image=raw_image, roi=roi, additional_rois=additional_rois,
+            roi_colors=roi_colors, image_target_mask=image_target_mask,
+            pixel_in_micron=pixel_in_micron
+        )
+
+        # (Optional) save per-ROI images like before
+        if output:
+            rois = [roi] + list(additional_rois)
+            colors = ["black"] + list(roi_colors)
+            for i, region in enumerate(rois):
+                adjust_to_region(roi[3] + roi[2], region, colors[i], scalebar if pixel_in_micron else None)
+                plt.savefig(output.joinpath(
+                    f'directions_{region[0]}-{region[1]}-{region[2]}-{region[3]}_tile{tile_size}.png'))
+            plt.close()
+        else:
+            plt.show()
+
     if output:
-        print("Results writen to %s" % output)
+        print(f"Results written to {output}")
 
 
-def plot_average_directions(output, output_res, cell_table, bg_image, roi, additional_rois, roi_colors, tile_size,
-                            image_target_mask, pixel_in_micron):
+def plot_average_directions(output, output_res, avg_df, bg_image, roi,
+                                       additional_rois, roi_colors, image_target_mask, pixel_in_micron):
     shape = bg_image.shape
-    print("Calculating average directions, tile size %s..." % tile_size)
-    u, v, x, y, counts = calculate_average_directions(cell_table, shape, roi, tile_size, image_target_mask)
-    rois = [roi]
-    rois.extend(additional_rois)
-    colors = ['black']
-    colors.extend(roi_colors)
-    print("Plotting average directions...")
-    plt.figure("Average directions tile size %s" % tile_size, figsize=output_res)
+    tile_size = int(avg_df["tile_size"].iloc[0])
+
+    print(f"Plotting average directions from table (tile size {tile_size})...")
+    plt.figure(f"Average directions tile size {tile_size}", figsize=output_res)
     plt.imshow(bg_image.T, extent=roi, origin='upper', cmap='gray')
     ax = plt.gca()
     ax.get_xaxis().set_visible(False)
     ax.get_yaxis().set_visible(False)
+
+    scalebar = None
     if pixel_in_micron:
         scalebar = ScaleBar(pixel_in_micron, 'um', location='upper right', color='white', box_color='black')
-        plt.gca().add_artist(scalebar)
+        ax.add_artist(scalebar)
+
+    # Pull vectors from the table
+    x = avg_df["x"].to_numpy()
+    y = avg_df["y"].to_numpy()
+    u = avg_df["u"].to_numpy()
+    v = avg_df["v"].to_numpy()
+    counts = avg_df["count"].to_numpy()
+
     plot_grid(x, y, u, v, counts, tile_size, image_target_mask)
+
     if image_target_mask is not None:
         generate_target_contour(image_target_mask)
+
     plt.margins(0, 0)
     plt.tight_layout(pad=1)
-    if output:
-        for i, region in enumerate(rois):
-            adjust_to_region(roi[3] + roi[2], region, colors[i], scalebar if pixel_in_micron else None)
-            # plt.tight_layout(pad=1)
-            plt.savefig(output.joinpath(
-                'directions_%s-%s-%s-%s_tile%s.png' % (region[0], region[1], region[2], region[3], tile_size)))
-        plt.close()
-    else:
-        plt.show()
-
+    return scalebar
 
 def calculate_average_directions(cell_table, shape, crop_extend, tile_size, image_target_mask):
     """
