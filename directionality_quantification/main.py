@@ -3,7 +3,6 @@ import math
 from pathlib import Path
 
 import matplotlib.patches as mpatches
-import numpy as np
 import pandas as pd
 import tifffile
 from matplotlib import cm
@@ -13,6 +12,7 @@ from matplotlib.colors import Normalize
 from matplotlib.colors import to_rgba
 from matplotlib.patches import Rectangle
 from matplotlib_scalebar.scalebar import ScaleBar
+from pandas import DataFrame
 from scipy import ndimage
 from skimage.measure import label, regionprops
 from skimage.morphology import skeletonize
@@ -98,59 +98,55 @@ def get_roi(crop, image):
     return roi, additional_rois
 
 
-def analyze_segments(regions, image_target, pixel_in_micron):
+def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
+    rows = []
 
-    cell_table_content = {
-        "Label": {},
-        "Area in px²": {},
-        "Area in um²": {},
-        "Mean": {},
-        "XM": {},
-        "YM": {},
-        "X center biggest circle": {},
-        "Y center biggest circle": {},
-        "%Area": {},
-        "AR": {},
-        "Circ.": {},
-        "Round": {},
-        "Solidity": {},
-        "MScore": {},
-        "Length cell vector": {},
-        "Absolute angle": {},
-        "Rolling ball angle": {},
-        "Relative angle": {},
-    }
+    norm_relative = Normalize(0, np.pi)
+    colormap_relative = cm.coolwarm
+
+    norm_absolute = Normalize(-np.pi, np.pi)
+    colormap_absolute = cm.hsv
+
     for index, region in enumerate(tqdm(regions, desc="Processing Regions")):
-
-        # write regionprops into table
         label = region.label
 
-        cell_table_content["Label"][label] = label
-        cell_table_content["Area in px²"][label] = region.area
-        if pixel_in_micron:
-            cell_table_content["Area in um²"][label] = region.area * (pixel_in_micron ** 2)
-        cell_table_content["Mean"][label] = region.intensity_mean
-        cell_table_content["XM"][label] = region.centroid[0]
-        cell_table_content["YM"][label] = region.centroid[1]
+        row = {
+            "Label": label,
+            "Area in px²": region.area,
+            "Area in um²": region.area * (pixel_in_micron ** 2) if pixel_in_micron else None,
+            "Mean": region.intensity_mean,
+            "XM": region.centroid[0],
+            "YM": region.centroid[1],
+        }
+
+        # Derived properties
         circularity = max(0, min(4 * math.pi * region.area / math.pow(region.perimeter, 2), 1.0))
-        cell_table_content["Circ."][label] = circularity
-        cell_table_content["%Area"][label] = region.area / region.area_filled * 100
-        # cell_table_content["AR"][region.label] = ""
-        # cell_table_content["Round"][region.label] = ""
-        # cell_table_content["Solidity"][region.label] = ""
+        row["Circ."] = circularity
+        row["%Area"] = region.area / region.area_filled * 100
+
         if pixel_in_micron:
-            cell_table_content["MScore"][label] = circularity * ((cell_table_content["Area in um²"][label] - 27) / 27)
+            row["MScore"] = circularity * ((row["Area in um²"] - 27) / 27)
 
         skeleton, center, length_cell_vector, absolute_angle, relative_angle, rolling_ball_angle = region_extension_analysis(region, image_target)
+        dx = length_cell_vector * np.sin(absolute_angle)
+        dy = length_cell_vector * np.cos(absolute_angle)
 
-        cell_table_content["X center biggest circle"][label] = center[0]
-        cell_table_content["Y center biggest circle"][label] = center[1]
-        cell_table_content["Length cell vector"][label] = length_cell_vector
-        cell_table_content["Absolute angle"][label] = absolute_angle
-        cell_table_content["Rolling ball angle"][label] = rolling_ball_angle
-        cell_table_content["Relative angle"][label] = relative_angle
+        row["X center biggest circle"] = center[0]
+        row["Y center biggest circle"] = center[1]
+        row["Length cell vector"] = length_cell_vector
+        row["Absolute angle"] = absolute_angle
+        row["Rolling ball angle"] = rolling_ball_angle
+        row["Relative angle"] = relative_angle
+        row["DX"] = dx
+        row["DY"] = dy
+        row["Relative angle color"] = colormap_relative(norm_relative(np.pi - np.abs(relative_angle)))
+        row["Absolute angle color"] = colormap_absolute(norm_absolute(np.arctan2(dy, dx)))
 
-    return cell_table_content
+        rows.append(row)
+
+    # Convert list of dicts to DataFrame
+    cell_table = pd.DataFrame(rows)
+    return cell_table
 
 
 def region_extension_analysis(region, image_target):
@@ -272,14 +268,14 @@ def angle_between(v1, v2):
     return angle
 
 
-def write_table(cell_table_content, output):
+def write_table(cell_table_content: DataFrame, output):
     if cell_table_content is not None:
         if output:
             output = Path(output)
             output.mkdir(parents=True, exist_ok=True)
-            pd.DataFrame(data=cell_table_content).to_csv(output.joinpath("cells.csv"))
+            cell_table_content.to_csv(output.joinpath("cells.csv"))
 
-def plot(cell_table, raw_image, label_image, roi, additional_rois, image_target_mask, pixel_in_micron, tiles, output, output_res):
+def plot(cell_table: DataFrame, raw_image, label_image, roi, additional_rois, image_target_mask, pixel_in_micron, tiles, output, output_res):
     if output:
         output = Path(output)
         output.mkdir(parents=True, exist_ok=True)
@@ -288,61 +284,19 @@ def plot(cell_table, raw_image, label_image, roi, additional_rois, image_target_
     roi_colors = []
     if len(additional_rois) > 0:
         roi_colors = plot_rois(output, output_res, label_image, roi, additional_rois)
-    directions = create_arrows(cell_table, image_target_mask)
-    plot_all_directions(output, output_res, directions, label_image, roi, additional_rois, roi_colors, image_target_mask, pixel_in_micron)
+    plot_all_directions(output, output_res, cell_table, label_image, roi, additional_rois, roi_colors, image_target_mask, pixel_in_micron)
     for tile in tiles.split(','):
-        plot_average_directions(output, output_res, directions, raw_image, roi, additional_rois, roi_colors,
+        plot_average_directions(output, output_res, cell_table, raw_image, roi, additional_rois, roi_colors,
                                 tile_size=int(tile), image_target_mask=image_target_mask, pixel_in_micron=pixel_in_micron)
     if output:
         print("Results writen to %s" % output)
 
 
-def create_arrows(cell_table_content, image_target_mask):
-    """
-    Generate arrow definitions for each cell based on a fully computed cell table.
-
-    Parameters:
-        cell_table_content (dict): Dictionary with keys for each metric and values that are sub-dictionaries
-            mapping label -> measurement. Expected keys include "Label", "XM", "YM",
-            "length_cell_vector", "absolute_angle", and "relative_angle".
-
-    Returns:
-        numpy.ndarray: An array with one arrow per cell. Each arrow is a list of the form:
-            [center, vector, [relative_angle, arrow_length]]
-                - center: [x_center, y_center]
-                - vector: [dx, dy] computed from absolute_angle and length_cell_vector
-                - [relative_angle, arrow_length]: additional metadata
-    """
-    arrows = []
-    # Loop over all labels stored in the table.
-    # Assume that cell_table_content["Label"] is a dict where keys are the label IDs.
-    for label in cell_table_content["Label"]:
-        XM = cell_table_content["X center biggest circle"][label]
-        YM = cell_table_content["Y center biggest circle"][label]
-        center = [XM, YM]
-
-        # Get the extension length and angle from the table.
-        length_vector = cell_table_content["Length cell vector"][label]
-        absolute_angle = cell_table_content["Absolute angle"][label]
-        relative_angle = cell_table_content["Relative angle"][label]
-
-        # Compute the components of the arrow using the absolute angle.
-        # This assumes the standard mathematical convention:
-        # dx = L * sin(theta), dy = L * cos(theta)
-        dx = length_vector * np.sin(absolute_angle)
-        dy = length_vector * np.cos(absolute_angle)
-        # Assemble the arrow.
-        arrow = [center, [dx, dy], [relative_angle if image_target_mask is not None else absolute_angle, length_vector]]
-        arrows.append(arrow)
-
-    return np.array(arrows)
-
-
-def plot_average_directions(output, output_res, arrows, bg_image, roi, additional_rois, roi_colors, tile_size,
+def plot_average_directions(output, output_res, cell_table, bg_image, roi, additional_rois, roi_colors, tile_size,
                             image_target_mask, pixel_in_micron):
     shape = bg_image.shape
     print("Calculating average directions, tile size %s..." % tile_size)
-    u, v, x, y, counts = calculate_average_directions(arrows, shape, roi, tile_size, image_target_mask)
+    u, v, x, y, counts = calculate_average_directions(cell_table, shape, roi, tile_size, image_target_mask)
     rois = [roi]
     rois.extend(additional_rois)
     colors = ['black']
@@ -372,51 +326,69 @@ def plot_average_directions(output, output_res, arrows, bg_image, roi, additiona
         plt.show()
 
 
-def calculate_average_directions(directions, shape, crop_extend, tile_size, image_target_mask):
-    tiles_num_x = int(shape[0] / tile_size)+1
-    tiles_num_y = int(shape[1] / tile_size)+1
+def calculate_average_directions(cell_table, shape, crop_extend, tile_size, image_target_mask):
+    """
+    cell_table: pandas.DataFrame with columns
+        ["X center biggest circle","Y center biggest circle",
+         "Length cell vector","Relative angle","DX","DY"]
+    shape: (H, W) of the background image
+    crop_extend: [x_min, x_max, y_min, y_max] (as in your original)
+    """
 
-    # tile centers
-    x = np.array([tile_x * tile_size + crop_extend[0] for tile_x, _ in np.ndindex(tiles_num_x, tiles_num_y)], dtype=int)
-    y = np.array([tile_y * tile_size + crop_extend[2] for _, tile_y in np.ndindex(tiles_num_x, tiles_num_y)], dtype=int)
+    tiles_num_x = int(shape[0] / tile_size) + 1
+    tiles_num_y = int(shape[1] / tile_size) + 1
 
-    arrow_indices_x = np.array([int((arrow[0][0] - crop_extend[0]) / tile_size) for arrow in directions])
-    arrow_indices_y = np.array([int((shape[1]-arrow[0][1] - crop_extend[2]) / tile_size) for arrow in directions])
-    counts = [np.count_nonzero((arrow_indices_x == index_x) & (arrow_indices_y == index_y)) for index_x, index_y in
-              np.ndindex(tiles_num_x, tiles_num_y)]
-    where = [np.asarray((arrow_indices_x == index_x) & (arrow_indices_y == index_y)).nonzero() for index_x, index_y in
-             np.ndindex(tiles_num_x, tiles_num_y)]
-    max_length = np.mean(directions[:][:, 2, 1])
-    print(max_length)
+    # Tile centers (match original ndindex ordering)
+    x = np.array([tile_x * tile_size + crop_extend[0]
+                  for tile_x, _ in np.ndindex(tiles_num_x, tiles_num_y)], dtype=int)
+    y = np.array([tile_y * tile_size + crop_extend[2]
+                  for _, tile_y in np.ndindex(tiles_num_x, tiles_num_y)], dtype=int)
 
-    # weighted sum of the relative angle of an arrow in relation to a target (weights: length of the arrow)
-    # sum_weighted_angle = [np.sum(directions[arrow_indices[0]][:, 2, 0] * directions[arrow_indices[0]][:, 2, 1]) for
+    # Integer bin indices per cell (use floor division and cast to int)
+    ix = ((cell_table["X center biggest circle"] - crop_extend[0]) // tile_size).astype(int)
+    iy = ((shape[1] - cell_table["Y center biggest circle"] - crop_extend[2]) // tile_size).astype(int)
+
+    where = []
+    counts = []
+    for index_x, index_y in np.ndindex(tiles_num_x, tiles_num_y):
+        mask = (ix == index_x) & (iy == index_y)
+        idx = np.where(mask.to_numpy())[0]
+        where.append(idx)
+        counts.append(int(idx.size))
+
+    # Typical scale to normalize angles-by-length
+    mean_length = float(np.nanmean(cell_table["Length cell vector"])) if len(cell_table) else 0.0
+    if mean_length == 0 or np.isnan(mean_length):
+        mean_length = 1.0  # avoid division by zero
+
     if image_target_mask is not None:
-        avg_angle = [np.mean((np.pi-np.abs(directions[arrow_indices[0]][:, 2, 0])) * directions[arrow_indices[0]][:, 2, 1]/max_length) for arrow_indices in where]
-        sum_weights = [np.sum(directions[arrow_indices[0]][:, 2, 1]) for arrow_indices in where]
-        avg_length = np.divide(sum_weights, counts, out=np.zeros_like(avg_angle),
-                               where=np.array(counts, dtype=int) != 0)
-        u = avg_angle
-        v = avg_length
+        # u: weighted mean relative angle (flipped as in your formula)
+        # v: average length in the tile
+        u = []
+        v = []
+        for idx in where:
+            if idx.size == 0:
+                u.append(0.0)
+                v.append(0.0)
+                continue
+            rel = cell_table.loc[idx, "Relative angle"].to_numpy()
+            L   = cell_table.loc[idx, "Length cell vector"].to_numpy()
+            u.append(np.nanmean((np.pi - np.abs(rel)) * (L / mean_length)))
+            sum_L = np.nansum(L)
+            v.append(sum_L / idx.size)
     else:
-        u = [-np.mean(directions[arrow_indices[0]][:, 1, 0]) for arrow_indices in where]
-        v = [-np.mean(directions[arrow_indices[0]][:, 1, 1]) for arrow_indices in where]
+        # u,v are the (negative) means of DX,DY
+        u = []
+        v = []
+        for idx in where:
+            if idx.size == 0:
+                u.append(0.0)
+                v.append(0.0)
+                continue
+            u.append(-float(np.nanmean(cell_table.loc[idx, "DX"])))
+            v.append(-float(np.nanmean(cell_table.loc[idx, "DY"])))
 
-    return u, v, x, y, counts
-
-
-def plot_arrows(x, y, u, v):
-    norm = Normalize(-np.pi, np.pi)
-    colors = np.arctan2(v, u)
-    colormap = cm.hsv
-    return plt.quiver(x, y, u, v, color=colormap(norm(colors)), angles='xy', width=0.003)
-
-
-def plot_arrows_relative(x, y, u, v, relative_angle):
-    norm = Normalize(0, np.pi)
-    colors = np.pi - np.abs(relative_angle)
-    colormap = cm.coolwarm
-    return plt.quiver(x, y, u, v, color=colormap(norm(colors)), angles='xy', width=2, units='dots')
+    return np.array(u), np.array(v), x, y, counts
 
 
 def plot_grid(x, y, u, v, counts, tile_size, image_target_mask):
@@ -476,7 +448,7 @@ def plot_grid(x, y, u, v, counts, tile_size, image_target_mask):
     # plt.quiver(x+tile_size/2., y+tile_size/2., u, v, color=colormap(norm(colors)), angles='xy', scale_units='xy', scale=0.5)
 
 
-def plot_all_directions(output, output_res, directions, bg_image, roi, additional_rois, additional_roi_colors,
+def plot_all_directions(output, output_res, cell_table: DataFrame, bg_image, roi, additional_rois, additional_roi_colors,
                         image_target_mask, pixel_in_micron):
     print("Plotting all directions...")
     rois = [roi]
@@ -494,18 +466,18 @@ def plot_all_directions(output, output_res, directions, bg_image, roi, additiona
     if image_target_mask is not None:
         generate_target_contour(image_target_mask)
 
-    x = directions[:, 0, 0]
-    y = roi[3]-directions[:, 0, 1]
-    u = -directions[:, 1, 0]
-    v = -directions[:, 1, 1]
-    rel_angle = directions[:, 2, 0]
+    x = cell_table["X center biggest circle"]
+    y = roi[3]-cell_table["Y center biggest circle"]
+    u = -cell_table["DX"]
+    v = -cell_table["DY"]
+    colors = cell_table["Relative angle color"] if image_target_mask is not None else cell_table["Absolute angle color"]
+
 
     # plt.scatter(x, y, color='white', s=15)
     if image_target_mask is not None:
-        quiver = plot_arrows_relative(x, y, u, v, rel_angle)
-        # draw_arrows(bg_image_with_arrows, x, y, u, v, rel_angle)
+        plt.quiver(x, y, u, v, color=colors, angles='xy', width=2, units='dots')
     else:
-        quiver = plot_arrows(x, y, u, v)
+        plt.quiver(x, y, u, v, color=colors, angles='xy', width=0.003)
 
     # Image.fromarray(bg_image_with_arrows).save('directions.tif')
 
