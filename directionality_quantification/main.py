@@ -2,16 +2,15 @@ import argparse
 import math
 from pathlib import Path
 
-import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
 import tifffile
 from matplotlib import cm
 from matplotlib import patches
 from matplotlib import pyplot as plt
-from matplotlib.colors import Normalize
-from matplotlib.colors import to_rgba
+from matplotlib.colors import Normalize, to_hex, to_rgba
 from matplotlib.patches import Rectangle
+from matplotlib.pyplot import get_cmap
 from matplotlib_scalebar.scalebar import ScaleBar
 from pandas import DataFrame
 from scipy import ndimage
@@ -19,6 +18,10 @@ from skimage.measure import label, regionprops
 from skimage.morphology import skeletonize
 from tqdm import tqdm
 
+REL_NORM  = Normalize(0, 180)
+ABS_NORM  = Normalize(0, 360)
+REL_CMAP = get_cmap("coolwarm_r")
+ABS_CMAP = get_cmap("hsv")
 
 def run():
     parser = argparse.ArgumentParser(description="Analyze cell extension orientation")
@@ -102,12 +105,6 @@ def get_roi(crop, image):
 def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
     rows = []
 
-    norm_relative = Normalize(0, np.pi)
-    colormap_relative = cm.coolwarm
-
-    norm_absolute = Normalize(-np.pi, np.pi)
-    colormap_absolute = cm.hsv
-
     for index, region in enumerate(tqdm(regions, desc="Processing Regions")):
         label = region.label
 
@@ -128,20 +125,34 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
         if pixel_in_micron:
             row["MScore"] = circularity * ((row["Area in um²"] - 27) / 27)
 
-        skeleton, center, length_cell_vector, absolute_angle, relative_angle, rolling_ball_angle = region_extension_analysis(region, image_target)
-        dx = length_cell_vector * np.sin(absolute_angle)
-        dy = length_cell_vector * np.cos(absolute_angle)
+        # angles from region_extension_analysis(...)
+        skeleton, center, L, abs_raw, rel_raw, rolling_ball_angle = region_extension_analysis(region, image_target)
+
+        # --- normalize for math (canonical) ---
+        rel_rad = np.abs(rel_raw) % (2 * np.pi)
+
+        # --- normalize for display/color (standard 0 at +X) ---
+        abs_rad = (np.pi / 2 - abs_raw) % (2 * np.pi)
+        abs_deg = np.degrees(abs_rad)
+        rel_deg = np.degrees(rel_rad)
+
+        # vectors for downstream math, from canonical abs_rad
+        dx = L * np.sin(abs_raw)
+        dy = L * np.cos(abs_raw)
 
         row["X center biggest circle"] = center[0]
         row["Y center biggest circle"] = center[1]
-        row["Length cell vector"] = length_cell_vector
-        row["Absolute angle"] = absolute_angle
+        row["Length cell vector"] = L
         row["Rolling ball angle"] = rolling_ball_angle
-        row["Relative angle"] = relative_angle
+
+        row["Absolute angle"] = abs_deg
+        row["Relative angle"] = rel_deg
+
         row["DX"] = dx
         row["DY"] = dy
-        row["Relative angle color"] = colormap_relative(norm_relative(np.pi - np.abs(relative_angle)))
-        row["Absolute angle color"] = colormap_absolute(norm_absolute(np.arctan2(dy, dx)))
+
+        # row["Relative angle color"] = REL_CMAP(REL_NORM(rel_deg))
+        # row["Absolute angle color"] = ABS_CMAP(ABS_NORM(abs_deg))
 
         rows.append(row)
 
@@ -227,63 +238,83 @@ def filter_regions_by_size(min_size, max_size, n_components, regions):
     return regions
 
 
-def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask, color="black"):
-    """
-    Returns a DataFrame with one row per tile:
-      columns: ["tile_x","tile_y","x","y","u","v","count",
-                "tile_size","color","mode"]
-    - (x,y): tile anchor (same as used in plot_grid)
-    - (u,v): averaged direction values per tile
-    - count: number of cells contributing to the tile
-    - mode: "relative" if target mask given, else "absolute"
-    """
+def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask):
     tiles_num_x = int(shape[0] / tile_size) + 1
     tiles_num_y = int(shape[1] / tile_size) + 1
 
-    # Integer bin indices per cell
     ix = ((cell_table["X center biggest circle"] - crop_extend[0]) // tile_size).astype(int)
     iy = ((shape[1] - cell_table["Y center biggest circle"] - crop_extend[2]) // tile_size).astype(int)
 
-    mean_length = float(np.nanmean(cell_table["Length cell vector"])) if len(cell_table) else 0.0
-    if mean_length == 0 or np.isnan(mean_length):
-        mean_length = 1.0
-
-    rows = []
-    mode = "relative" if image_target_mask is not None else "absolute"
+    rows, counts_all, avg_lengths_all = [], [], []
+    is_relative = image_target_mask is not None
 
     for tile_x, tile_y in np.ndindex(tiles_num_x, tiles_num_y):
-        # Tile anchor positions (match your plot_grid usage)
         x = int(tile_x * tile_size + crop_extend[0])
         y = int(tile_y * tile_size + crop_extend[2])
 
         mask = (ix == tile_x) & (iy == tile_y)
-        if not mask.any():
-            rows.append({
+        idx = np.where(mask.to_numpy())[0]
+        count = int(idx.size)
+
+        if count == 0:
+            row = {
                 "tile_x": tile_x, "tile_y": tile_y, "x": x, "y": y,
-                "u": 0.0, "v": 0.0, "count": 0,
-                "tile_size": tile_size, "color": color, "mode": mode
-            })
+                "u": 0.0, "v": 0.0, "count": 0, "avg_length": 0.0,
+                "tile_size": tile_size, "color_mode": "relative" if is_relative else "absolute",
+                "color_scalar_deg": 0.0, "color_hex": to_hex((0, 0, 0)),
+                # alpha filled later
+            }
+            rows.append(row)
+            counts_all.append(0.0)
+            avg_lengths_all.append(0.0)
             continue
 
-        idx = np.where(mask.to_numpy())[0]
-
-        if image_target_mask is not None:
-            rel = cell_table.loc[idx, "Relative angle"].to_numpy()
-            L   = cell_table.loc[idx, "Length cell vector"].to_numpy()
-            u = float(np.nanmean((np.pi - np.abs(rel)) * (L / mean_length)))
-            v = float(np.nansum(L) / idx.size)  # avg length in tile
+        if is_relative:
+            # length-weighted mean relative angle (in radians)
+            rel_rad = np.radians(cell_table.loc[idx, "Relative angle"])
+            L = cell_table.loc[idx, "Length cell vector"]
+            wsum = np.nansum(L)
+            rel_tile = (np.nansum(rel_rad * L) / wsum) if wsum > 0 else 0.0  # [0, π]
+            u = rel_tile
+            v = float(np.nanmean(L))
+            avg_length = v
+            color_scalar_deg = float(np.degrees(rel_tile))  # 0..180
+            color_hex = to_hex(REL_CMAP(REL_NORM(color_scalar_deg)))
         else:
-            u = -float(np.nanmean(cell_table.loc[idx, "DX"]))
-            v = -float(np.nanmean(cell_table.loc[idx, "DY"]))
+            dx_bar = float(np.nanmean(cell_table.loc[idx, "DX"]))
+            dy_bar = float(np.nanmean(cell_table.loc[idx, "DY"]))
+            u, v = dx_bar, dy_bar
+            avg_length = float(np.hypot(u, v))
+            angle_deg = (np.degrees(np.arctan2(v, u))) % 360.0
+            color_scalar_deg = angle_deg
+            color_hex = to_hex(ABS_CMAP(ABS_NORM(color_scalar_deg)))
 
-        rows.append({
+        row = {
             "tile_x": tile_x, "tile_y": tile_y, "x": x, "y": y,
-            "u": u, "v": v, "count": int(idx.size),
-            "tile_size": tile_size, "color": color, "mode": mode
-        })
+            "u": u, "v": v, "count": count, "avg_length": avg_length,
+            "tile_size": tile_size, "color_mode": "relative" if is_relative else "absolute",
+            "color_scalar_deg": color_scalar_deg, "color_hex": color_hex,
+            # alpha filled later
+        }
+        rows.append(row)
+        counts_all.append(float(count))
+        avg_lengths_all.append(float(avg_length))
+
+    counts_all = np.asarray(counts_all, dtype=float)
+    avg_lengths_all = np.asarray(avg_lengths_all, dtype=float)
+
+    max_count = float(np.nanpercentile(counts_all, 90))
+    max_length = float(np.nanpercentile(avg_lengths_all, 90))
+
+    for r in rows:
+        c = r["count"]
+        L = r["avg_length"]
+        alpha = min(1.0, c / max_count) * min(1.0, L / max_length) * 0.9 if (max_count > 0 and max_length > 0) else 0.0
+        r["alpha"] = alpha
+        r["max_count"] = float(max_count)
+        r["max_length"] = float(max_length)
 
     return pd.DataFrame(rows)
-
 
 
 def angle_between(v1, v2):
@@ -359,8 +390,7 @@ def plot(cell_table: DataFrame, raw_image, label_image, roi, additional_rois,
             shape=raw_image.shape,
             crop_extend=roi,
             tile_size=tile_size,
-            image_target_mask=image_target_mask,
-            color="black"  # or pick from roi_colors if you want per-ROI variants
+            image_target_mask=image_target_mask
         )
 
         # 2) SAVE the table
@@ -371,13 +401,11 @@ def plot(cell_table: DataFrame, raw_image, label_image, roi, additional_rois,
 
         # 3) PLOT from the table
         scalebar = plot_average_directions(
-            output=output, output_res=output_res, avg_df=avg_df,
-            bg_image=raw_image, roi=roi, additional_rois=additional_rois,
-            roi_colors=roi_colors, image_target_mask=image_target_mask,
+            output_res=output_res, avg_df=avg_df,
+            bg_image=raw_image, roi=roi, image_target_mask=image_target_mask,
             pixel_in_micron=pixel_in_micron
         )
 
-        # (Optional) save per-ROI images like before
         if output:
             rois = [roi] + list(additional_rois)
             colors = ["black"] + list(roi_colors)
@@ -393,32 +421,29 @@ def plot(cell_table: DataFrame, raw_image, label_image, roi, additional_rois,
         print(f"Results written to {output}")
 
 
-def plot_average_directions(output, output_res, avg_df, bg_image, roi,
-                                       additional_rois, roi_colors, image_target_mask, pixel_in_micron):
-    shape = bg_image.shape
+def plot_average_directions(output_res, avg_df, bg_image, roi, image_target_mask, pixel_in_micron):
     tile_size = int(avg_df["tile_size"].iloc[0])
 
     print(f"Plotting average directions from table (tile size {tile_size})...")
-    plt.figure(f"Average directions tile size {tile_size}", figsize=output_res)
-    plt.imshow(bg_image.T, extent=roi, origin='upper', cmap='gray')
-    ax = plt.gca()
-    ax.get_xaxis().set_visible(False)
-    ax.get_yaxis().set_visible(False)
+
+    fig, ax = plt.subplots(figsize=output_res, num=f"Average directions tile size {tile_size}")
+    ax.imshow(bg_image.T, extent=roi, origin='upper', cmap='gray')
+    ax.set_xlim(roi[0], roi[1])
+    ax.set_ylim(roi[2], roi[3])
+    ax.margins(0)
+
+    for s in ax.spines.values():
+        s.set_visible(False)
 
     scalebar = None
     if pixel_in_micron:
         scalebar = ScaleBar(pixel_in_micron, 'um', location='upper right', color='white', box_color='black')
         ax.add_artist(scalebar)
 
-    # Pull vectors from the table
-    x = avg_df["x"].to_numpy()
-    y = avg_df["y"].to_numpy()
-    u = avg_df["u"].to_numpy()
-    v = avg_df["v"].to_numpy()
-    counts = avg_df["count"].to_numpy()
+    # draw the grid rectangles (uses precomputed color + alpha in avg_df)
+    plot_grid_from_table(avg_df, image_target_mask, roi)
 
-    plot_grid(x, y, u, v, counts, tile_size, image_target_mask)
-
+    # target contour, if any
     if image_target_mask is not None:
         generate_target_contour(image_target_mask)
 
@@ -491,110 +516,125 @@ def calculate_average_directions(cell_table, shape, crop_extend, tile_size, imag
     return np.array(u), np.array(v), x, y, counts
 
 
-def plot_grid(x, y, u, v, counts, tile_size, image_target_mask):
+def plot_grid_from_table(avg_df, image_target_mask, roi):
+    ax = plt.gca()
+    nx = int(avg_df["tile_x"].max()) + 1
+    ny = int(avg_df["tile_y"].max()) + 1
 
+    rgba = np.zeros((ny, nx, 4), dtype=np.float32)
+    tx = avg_df["tile_x"].to_numpy(np.int32)
+    ty = avg_df["tile_y"].to_numpy(np.int32)
+    cols = np.array([to_rgba(c, a) for c, a in zip(avg_df["color_hex"], avg_df["alpha"])],
+                    dtype=np.float32)
+    rgba[ty, tx, :] = cols
+    rgba = rgba[::-1, :, :]  # align with origin='upper'
+
+    ax.imshow(rgba, extent=roi, origin='upper', interpolation='nearest', resample=False)
+
+    _add_opacity_legend(ax)
     if image_target_mask is not None:
-        norm = Normalize(0, np.pi)
-        colors_legend = u
-        colormap = cm.coolwarm
-        colors = u
-    else:
-        norm = Normalize(-np.pi, np.pi)
-        ph = np.linspace(-np.pi, np.pi, 13)
-        scale_start = 30.
-        offset = 40.
-        x_legend = scale_start * np.cos(ph) + offset
-        y_legend = scale_start * np.sin(ph) + offset
-        u_legend = np.cos(ph) * scale_start * 0.5 + offset
-        v_legend = np.sin(ph) * scale_start * 0.5 + offset
-        colors_legend = np.arctan2(np.sin(ph), np.cos(ph))
-        # norm.autoscale(colors_legend)
-        colormap = cm.hsv
-        colors = np.arctan2(v, u)
+        sm = plt.cm.ScalarMappable(cmap=REL_CMAP); sm.set_clim(0, 180)
+        cbar = plt.colorbar(sm, ax=ax, location='bottom', pad=0.04, aspect=50, fraction=0.03, use_gridspec=True)
+        cbar.set_ticks([0, 180])
+        cbar.set_ticklabels(['Towards target (0°)', 'Away from target (180°)'])
+        cbar.set_label("Angle (deg)", labelpad=0)
+        cbar.ax.tick_params(pad=0)
 
-    max_length = 10.
-    max_count = tile_size * tile_size / 10000.
-    for index, _x in enumerate(x):
-        _y = y[index]
-        if image_target_mask is not None:
-            average_length = v[index]
-        else:
-            average_length = np.linalg.norm([u[index], v[index]])
-        cell_count = float(counts[index])
-        alpha = min(1., cell_count / max_count) * min(1., average_length / max_length) * 0.9
-        facecolor = to_rgba(colormap(norm(colors[index])), alpha)
-        plt.gca().add_patch(Rectangle((_x, _y), tile_size, tile_size, facecolor=facecolor))
+def _add_opacity_legend(ax):
+    sm = plt.cm.ScalarMappable(cmap=get_cmap("binary"))
+    sm.set_clim(0, 1)
+    cbar = plt.colorbar(
+        sm, ax=ax, location='bottom',
+        pad=0.04,
+        aspect=50,
+        fraction=0.03,
+        use_gridspec=True
+    )
 
-    if image_target_mask is None:
-        for index, _x in enumerate(x_legend):
-            pos1 = [_x, y_legend[index]]
-            pos2 = [u_legend[index], v_legend[index]]
-            plt.annotate('', pos1, xytext=pos2, xycoords='axes pixels', arrowprops={
-                'width': 3., 'headlength': 4.4, 'headwidth': 7., 'edgecolor': 'black',
-                'facecolor': colormap(norm(colors_legend[index]))
-            })
-    else:
-        sm = plt.cm.ScalarMappable(cmap=colormap)
-        sm.set_array(norm(colors))
-        cbar = plt.colorbar(sm, ax=plt.gca(), location='bottom', pad=0.01, aspect=50)
-        vmin, vmax = cbar.vmin, cbar.vmax
-        cbar.set_ticks([vmin, vmax])
-        cbar.set_ticklabels(['Moving away from target', 'Moving towards target'])
-        cbar.ax.xaxis.get_majorticklabels()[0].set_horizontalalignment('left')
-        cbar.ax.xaxis.get_majorticklabels()[-1].set_horizontalalignment('right')
-        circ1 = mpatches.Rectangle((0,0), 1, 1, edgecolor='#ff0000', facecolor='#000000', hatch=r'O', label='target')
-        plt.legend(handles=[circ1], loc=2, handlelength=4, handleheight=4)
-        # legend = plt.gca().legend(handles=[cbar, patch], loc='lower center', bbox_to_anchor=(0.5, -0.3))
-    # plt.quiver(x+tile_size/2., y+tile_size/2., u, v, color=colormap(norm(colors)), angles='xy', scale_units='xy', scale=0.5)
+    cbar.set_ticks([0, 1])
+    cbar.set_ticklabels(['Less cells, shorter extensions (transparent)', 'More cells, longer extensions (opaque)'])
+    cbar.set_label("Opacity", labelpad=0)
+    cbar.ax.tick_params(pad=0)
+    cbar.ax.xaxis.get_majorticklabels()[0].set_horizontalalignment('left')
+    cbar.ax.xaxis.get_majorticklabels()[-1].set_horizontalalignment('right')
 
 
-def plot_all_directions(output, output_res, cell_table: DataFrame, bg_image, roi, additional_rois, additional_roi_colors,
-                        image_target_mask, pixel_in_micron):
+def plot_all_directions(output, output_res, cell_table, bg_image, roi, additional_rois,
+                        additional_roi_colors, image_target_mask, pixel_in_micron):
     print("Plotting all directions...")
     rois = [roi]
     rois.extend(additional_rois)
-    colors = ['black']
-    colors.extend(additional_roi_colors)
-    fig = plt.figure("All directions", output_res)
-    plt.imshow(bg_image.T, extent=roi, origin='upper', cmap='gray')
+    region_colors = ['black']
+    region_colors.extend(additional_roi_colors)
+
+    fig, ax = plt.subplots(figsize=output_res, num="All directions")
+    ax.imshow(bg_image.T, extent=roi, origin='upper', cmap='gray')
+    ax.set_xlim(roi[0], roi[1])
+    ax.set_ylim(roi[2], roi[3])
+    ax.margins(0)
+
     scalebar = None
     if pixel_in_micron:
-        scalebar = ScaleBar(pixel_in_micron, 'um', location='upper right', color='white', box_color='black')
+        scalebar = ScaleBar(pixel_in_micron, 'um', location='upper right',
+                            color='white', box_color='black')
         plt.gca().add_artist(scalebar)
-    # bg_image_with_arrows = np.array(bg_image)
 
     if image_target_mask is not None:
         generate_target_contour(image_target_mask)
 
     x = cell_table["X center biggest circle"]
-    y = roi[3]-cell_table["Y center biggest circle"]
+    y = roi[3] - cell_table["Y center biggest circle"]
     u = -cell_table["DX"]
     v = -cell_table["DY"]
-    colors = cell_table["Relative angle color"] if image_target_mask is not None else cell_table["Absolute angle color"]
 
-
-    # plt.scatter(x, y, color='white', s=15)
+    # Use numeric values for coloring (so we can add legend / colorbar)
     if image_target_mask is not None:
-        plt.quiver(x, y, u, v, color=colors, angles='xy', width=2, units='dots')
+        values = cell_table["Relative angle"]    # numeric (radians or degrees)
     else:
-        plt.quiver(x, y, u, v, color=colors, angles='xy', width=0.003)
+        values = cell_table["Absolute angle"]
 
-    # Image.fromarray(bg_image_with_arrows).save('directions.tif')
+    quiv = plt.quiver(
+        x, y, u, v, values,
+        angles='xy',
+        rasterized=True,
+        width=0.002 if image_target_mask is None else 2,
+        units='dots' if image_target_mask is not None else 'width',
+        cmap=REL_CMAP if image_target_mask is not None else ABS_CMAP  # or any other colormap you like
+    )
+
+    # Add colorbar as legend
+    cbar = plt.colorbar(quiv, location='bottom', pad=0.05, aspect=50)
+    cbar.set_ticks([0, 180])
+    cbar.set_ticklabels(['Moving towards target (0°)', 'Moving away from target (180°)'])
+    cbar.set_label("Angle (deg)")
+
+    cbar.ax.xaxis.get_majorticklabels()[0].set_horizontalalignment('left')
+    cbar.ax.xaxis.get_majorticklabels()[-1].set_horizontalalignment('right')
 
     plt.margins(0, 0)
     plt.tight_layout(pad=1)
+
     if output:
         for i, region in enumerate(rois):
-            adjust_to_region(roi[3] + roi[2], region, colors[i], scalebar if pixel_in_micron else None)
-            plt.savefig(output.joinpath('directions_%s-%s-%s-%s.png' % (region[0], region[1], region[2], region[3])))
+            adjust_to_region(
+                roi[3] + roi[2], region, region_colors[i],
+                scalebar if pixel_in_micron else None
+            )
+            plt.savefig(output / f"directions_{region[0]}-{region[1]}-{region[2]}-{region[3]}.png")
         plt.close()
+
     print("Done printing all directions")
 
 
 def generate_target_contour(image_target_mask):
-    plt.contour(image_target_mask.T, 1, origin='upper', colors='red')
-    cs = plt.contourf(image_target_mask.T, 1, hatches=['', 'O'], origin='upper', colors='none')
-    cs.set_edgecolor((1, 0, 0.2, 1))
+    if image_target_mask is None:
+        return
+    ax = plt.gca()
+    ax.contour(image_target_mask.T, levels=[0.5], origin='upper',
+               colors='red', linewidths=1.0)
+    # plt.contour(image_target_mask.T, 1, origin='upper', colors='red')
+    # cs = plt.contourf(image_target_mask.T, 1, hatches=['', 'O'], origin='upper', colors='none')
+    # cs.set_edgecolor((1, 0, 0.2, 1))
 
 
 def adjust_to_region(data_height, region, region_color, scalebar):
@@ -628,3 +668,6 @@ def plot_rois(output, output_res, bg_image, roi, additional_rois):
     plt.close()
     return colors
 
+
+if __name__ == '__main__':
+    run()
