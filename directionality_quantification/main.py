@@ -559,72 +559,90 @@ def _add_opacity_legend(ax):
     cbar.ax.xaxis.get_majorticklabels()[-1].set_horizontalalignment('right')
 
 
-def plot_all_directions(output, output_res, cell_table, bg_image, roi, additional_rois,
-                        additional_roi_colors, image_target_mask, pixel_in_micron):
+import gc
+from skimage.draw import line_aa  # Add this import at the top of your script
+
+
+def plot_all_directions(output, output_res, cell_table, bg_image_display, roi, additional_rois, additional_roi_colors,
+                                 image_target_mask, pixel_in_micron):
+    """
+    Draws all vectors directly onto an RGBA image overlay to avoid high memory usage.
+    """
     print("Plotting all directions...")
+
     rois = [roi]
     rois.extend(additional_rois)
     region_colors = ['black']
     region_colors.extend(additional_roi_colors)
 
     fig, ax = plt.subplots(figsize=output_res, num="All directions")
-    ax.imshow(bg_image.T, extent=roi, origin='upper', cmap='gray')
-    ax.set_xlim(roi[0], roi[1])
-    ax.set_ylim(roi[2], roi[3])
-    ax.margins(0)
+    ax.imshow(bg_image_display.T, extent=roi, origin='upper', cmap='gray')
 
-    scalebar = None
-    if pixel_in_micron:
-        scalebar = ScaleBar(pixel_in_micron, 'um', location='upper right',
-                            color='white', box_color='black')
-        plt.gca().add_artist(scalebar)
+    # --- Create a transparent overlay to draw vectors on ---
+    # The overlay has the same height/width as the display image
+    overlay = np.zeros((bg_image_display.shape[0], bg_image_display.shape[1], 4), dtype=np.float32)
 
-    if image_target_mask is not None:
-        generate_target_contour(image_target_mask)
-
-    x = cell_table["X center biggest circle"]
-    y = roi[3] - cell_table["Y center biggest circle"]
-    u = -cell_table["DX"]
-    v = -cell_table["DY"]
-
-    # Use numeric values for coloring (so we can add legend / colorbar)
-    if image_target_mask is not None:
-        values = cell_table["Relative angle"]    # numeric (radians or degrees)
+    # Determine colors for all vectors at once for efficiency
+    is_relative = image_target_mask is not None
+    if is_relative:
+        angles = cell_table["Relative angle"]
+        colors = REL_CMAP(REL_NORM(angles.to_numpy()))
     else:
-        values = cell_table["Absolute angle"]
+        angles = cell_table["Absolute angle"]
+        colors = ABS_CMAP(ABS_NORM(angles.to_numpy()))
 
-    quiv = plt.quiver(
-        x, y, u, v, values,
-        angles='xy',
-        rasterized=True,
-        width=0.002 if image_target_mask is None else 2,
-        units='dots' if image_target_mask is not None else 'width',
-        cmap=REL_CMAP if image_target_mask is not None else ABS_CMAP  # or any other colormap you like
-    )
+    # --- Loop through vectors and draw them onto the overlay ---
+    # Using .itertuples() is much faster than iterating row by row
+    for row, color in tqdm(zip(cell_table.itertuples(), colors), total=len(cell_table), desc="Drawing vectors"):
+        # Y-coordinates need to be flipped for plotting
+        start_x, start_y = int(row.XM), int(roi[3] - row.YM)
+        end_x, end_y = int(row.XM - row.DX), int(roi[3] - (row.YM - row.DY))
 
-    # Add colorbar as legend
-    cbar = plt.colorbar(quiv, location='bottom', pad=0.05, aspect=50)
-    cbar.set_ticks([0, 180])
-    cbar.set_ticklabels(['Moving towards target (0°)', 'Moving away from target (180°)'])
-    cbar.set_label("Angle (deg)")
+        # Get pixel coordinates for an anti-aliased line
+        rr, cc, val = line_aa(start_y, start_x, end_y, end_x)
 
-    cbar.ax.xaxis.get_majorticklabels()[0].set_horizontalalignment('left')
-    cbar.ax.xaxis.get_majorticklabels()[-1].set_horizontalalignment('right')
+        # Filter out coordinates that are outside the image bounds
+        valid_idx = (rr >= 0) & (rr < overlay.shape[0]) & (cc >= 0) & (cc < overlay.shape[1])
+        rr, cc, val = rr[valid_idx], cc[valid_idx], val[valid_idx]
+
+        # Apply the color to the overlay, weighted by the anti-aliasing value
+        overlay[rr, cc, 0] = color[0]
+        overlay[rr, cc, 1] = color[1]
+        overlay[rr, cc, 2] = color[2]
+        overlay[rr, cc, 3] = val  # Use the anti-aliasing value for alpha
+
+    # Display the final vector overlay on top of the background image
+    ax.imshow(overlay, extent=roi, origin='upper')
+
+    # --- Add Legends and Scalebar ---
+    if pixel_in_micron:
+        scalebar = ScaleBar(pixel_in_micron, 'um', location='upper right', color='white', box_color='black')
+        ax.add_artist(scalebar)
+
+    if image_target_mask is not None:
+        generate_target_contour(image_target_mask.T)  # This still needs transpose for contouring
+        sm = plt.cm.ScalarMappable(cmap=REL_CMAP, norm=REL_NORM)
+        cbar = plt.colorbar(sm, ax=ax, location='bottom', pad=0.05, aspect=50)
+        cbar.set_ticks([0, 180])
+        cbar.set_ticklabels(['Towards target (0°)', 'Away from target (180°)'])
+        cbar.set_label("Angle (deg)")
+    else:
+        # Add legend for absolute angles if needed
+        pass
 
     plt.margins(0, 0)
     plt.tight_layout(pad=1)
 
+
     if output:
         for i, region in enumerate(rois):
-            adjust_to_region(
-                roi[3] + roi[2], region, region_colors[i],
-                scalebar if pixel_in_micron else None
-            )
+            adjust_to_region(roi[3] + roi[2], region, region_colors[i], scalebar if pixel_in_micron else None)
             plt.savefig(output / f"directions_{region[0]}-{region[1]}-{region[2]}-{region[3]}.png")
         plt.close()
 
-    print("Done printing all directions")
-
+    plt.close()
+    gc.collect()  # Important: Clean up memory
+    print("Done plotting all directions.")
 
 def generate_target_contour(image_target_mask):
     if image_target_mask is None:
