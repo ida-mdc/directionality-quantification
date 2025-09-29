@@ -67,6 +67,7 @@ For each segmented region:
    - Optionally, calculates directional vectors relative to a target distance map if provided.
 
 #### **7. Store Results**
+
 - For each region, records:
   - Direction vector length.
   - Absolute angle of the direction vector.
@@ -87,20 +88,50 @@ For each segmented region:
 
 ### **Outputs**
 
-#### **1. CSV File**
-- A CSV file named `cells.csv` is generated in the output directory (if a cell table is provided or regions are analyzed). 
-- The file contains the following columns:
+### **1. Individual Cell Data (`cells.csv`)**
 
-| **Column Name**           | **Description**                                                                                                   |
-|---------------------------|-------------------------------------------------------------------------------------------------------------------|
-| `length_cell_vector`      | Length of the calculated directional vector for the cell extension.                                               |
-| `absolute_angle`          | Absolute angle of the directional vector in radians relative to the vertical axis.                               |
-| `rolling_ball_angle`      | Angle of the directional vector relative to a target map (if provided).                                           |
-| `relative_angle`          | Angle between the directional vector and the target vector (if applicable).                                       |
+This file contains detailed metrics for each individual cell (or region) identified in the image.
 
-- If an input cell table is provided, these columns are appended to it, preserving the existing structure.
+| **Column Name** | **Description** |
+| :--- | :--- |
+| `Label` | A unique integer identifier for each detected cell region. |
+| `Area in px²` | The total area of the cell region in square pixels. |
+| `Area in um²` | The total area of the cell region in square micrometers (µm²). |
+| `Mean` | The mean pixel intensity within the cell region. |
+| `XM`, `YM` | The (X, Y) coordinates of the region's geometric center (centroid). |
+| `Circ.` | **Circularity** of the region, a value from 0 (a line) to 1 (a perfect circle). |
+| `%Area` | The percentage of the region's bounding box that is filled by the cell's pixels. |
+| `MScore` | A custom "morphology score" calculated from the cell's circularity and area. |
+| `X center biggest circle`, `Y center biggest circle` | The (X, Y) coordinates for the center of the largest circle that can be inscribed within the cell. |
+| `Radius biggest circle` | The radius (in pixels) of the largest inscribed circle. |
+| `Length cell vector` | The length (in pixels) of the primary orientation vector calculated for the cell's extensions. |
+| `Anisotropy` | A measure of the cell's elongation, ranging from 0 (not elongated) to 1 (highly elongated). |
+| `Rolling ball angle` | The angle of the local target vector (derived from the target image gradient), measured in **degrees** (0-360) from the upward vertical axis. |
+| `Absolute angle` | The absolute orientation of the cell's main vector, measured in **degrees** (0-360) from the upward vertical axis. |
+| `Relative angle` | The absolute difference between the `Absolute angle` and the `Rolling ball angle` in **degrees**, indicating how aligned the cell is to the target vector. |
+| `DX`, `DY` | The X and Y components of the cell's orientation vector (`Length cell vector`). |
 
-#### **2. Visualization Outputs**
+### **2. Tiled Average Data (`average_directions_tile{tile_size}.csv`)**
+
+For each tile size specified, a separate CSV file is generated. These files summarize the cell orientation data within a grid of tiles covering the image, which is useful for visualizing general trends.
+
+| **Column Name** | **Description** |
+| :--- | :--- |
+| `tile_x`, `tile_y` | The column and row index of the tile in the grid. |
+| `x`, `y` | The pixel coordinates of the top-left corner of the tile in the image. |
+| `u`, `v` | Components of the average vector. Their meaning depends on the `color_mode`: <br> • **Absolute mode**: Mean X (`u`) and Y (`v`) components of the cell vectors. <br> • **Relative mode**: Length-weighted mean relative angle in radians (`u`) and the mean cell vector length (`v`). |
+| `count` | The number of cells whose center falls within the tile. |
+| `avg_length` | The average `Length cell vector` for all cells within the tile. |
+| `tile_size` | The side length of the square tile in pixels. |
+| `color_mode` | The mode used for calculation, either `absolute` or `relative` (if a target mask was provided). |
+| `color_scalar_deg` | The final angle in degrees used to determine the tile's color in visualizations. |
+| `color_hex` | The hexadecimal color code representing the `color_scalar_deg`. |
+| `alpha` | The calculated transparency (0.0 to 1.0) for the tile, based on `count` and `avg_length`. |
+| `max_count` | The 90th percentile of cell counts across all tiles, used for normalizing the alpha value. |
+| `max_length` | The 90th percentile of average lengths across all tiles, used for normalizing the alpha value. |
+
+
+#### **3. Visualization Outputs**
 - Saved as image files in the specified output folder. The exact outputs depend on the options provided:
 
 1. **All Directions (`directions_<region>.png`)**:

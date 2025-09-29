@@ -7,7 +7,20 @@ import numpy as np
 import tifffile
 from skimage.draw import disk, line
 
-from directionality_quantification.main import run, angle_between
+from directionality_quantification.main import run
+from directionality_quantification.process import angle_between
+
+
+def _write_inputs(base_dir: Path, raw_image, labels_image, target_mask):
+    raw_path = base_dir / "input_raw.tif"
+    labels_path = base_dir / "input_labels.tif"
+    target_path = base_dir / "input_target.tif"
+
+    tifffile.imwrite(raw_path, raw_image.astype(np.uint8))
+    tifffile.imwrite(labels_path, labels_image.astype(np.uint16))
+    tifffile.imwrite(target_path, target_mask.astype(np.uint8))  # save even if unused
+
+    return raw_path, labels_path, target_path
 
 
 class TestCellExtensionOrientation(unittest.TestCase):
@@ -24,7 +37,7 @@ class TestCellExtensionOrientation(unittest.TestCase):
             "--input_target", "../sample/input_target.tif",
             "--output", str(self.output_dir),
             "--pixel_in_micron", "0.65",
-            "--output_res", "7:10"]
+            "--output_res", "10:7"]
 
         run()
 
@@ -159,17 +172,6 @@ class TestCellExtensionOrientation(unittest.TestCase):
 
         return raw_image, labels_image, target_mask
 
-    def _write_inputs(self, base_dir: Path, raw_image, labels_image, target_mask):
-        raw_path = base_dir / "input_raw.tif"
-        labels_path = base_dir / "input_labels.tif"
-        target_path = base_dir / "input_target.tif"
-
-        tifffile.imwrite(raw_path, raw_image.astype(np.uint8))
-        tifffile.imwrite(labels_path, labels_image.astype(np.uint16))
-        tifffile.imwrite(target_path, target_mask.astype(np.uint8))  # save even if unused
-
-        return raw_path, labels_path, target_path
-
     def _run_case(self, raw_image, labels_image, target_mask, output_name):
         for include_target in (False, True):
             with self.subTest(include_target=include_target):
@@ -177,7 +179,7 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 output_dir = temp_dir / "output"
                 output_dir.mkdir(exist_ok=True, parents=True)
 
-                raw_path, labels_path, target_path = self._write_inputs(
+                raw_path, labels_path, target_path = _write_inputs(
                     temp_dir, raw_image, labels_image, target_mask
                 )
 
@@ -189,7 +191,7 @@ class TestCellExtensionOrientation(unittest.TestCase):
                         "--input_labeling", str(labels_path),
                         "--output", str(output_dir),
                         "--pixel_in_micron", "0.65",
-                        "--output_res", "7:3",
+                        "--output_res", "10:7",
                     ]
                     if include_target:
                         sys.argv.extend(["--input_target", str(target_path)])
