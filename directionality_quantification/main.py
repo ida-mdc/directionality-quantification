@@ -67,7 +67,7 @@ def run():
 
     avg_tables = compute_and_write_avg_dir_tables(cell_table_content, image_raw, roi, image_target_mask, args.tiles, args.output)
 
-    plot(cell_table_content, image_raw, image, roi, additional_rois, image_target_mask, pixel_in_micron, args.tiles,
+    plot(cell_table_content, image_raw, roi, additional_rois, image_target_mask, pixel_in_micron, args.tiles,
          args.output, output_res, avg_tables)
 
 

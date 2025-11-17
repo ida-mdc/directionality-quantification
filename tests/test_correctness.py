@@ -96,14 +96,14 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 self.assertEqual(len(df), 3, "Expected three cells in the results table.")
 
                 # Pick the row closest to A's center
-                idxA = ((df["Y center biggest circle"] - cellA_center[0]).abs()
-                        + (df["X center biggest circle"] - cellA_center[1]).abs()).argmin()
+                idxA = ((df["YC"] - cellA_center[0]).abs()
+                        + (df["XC"] - cellA_center[1]).abs()).argmin()
                 rowA = df.iloc[int(idxA)]
 
                 # geometry at A
-                self.assertAlmostEqual(rowA["X center biggest circle"], cellA_center[1], delta=3,
+                self.assertAlmostEqual(rowA["XC"], cellA_center[1], delta=3,
                                        msg="Center X (cell A) is incorrect.")
-                self.assertAlmostEqual(rowA["Y center biggest circle"], cellA_center[0], delta=3,
+                self.assertAlmostEqual(rowA["YC"], cellA_center[0], delta=3,
                                        msg="Center Y (cell A) is incorrect.")
                 self.assertAlmostEqual(rowA["Radius biggest circle"], expected_radius, delta=2,
                                        msg="Radius (cell A) is incorrect.")
@@ -129,8 +129,8 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 # pull per-cell rows for easy access
                 # (match each by nearest centers, like for A)
                 def find_row_by_center(target_rc):
-                    j = ((df["Y center biggest circle"] - target_rc[0]).abs()
-                         + (df["X center biggest circle"] - target_rc[1]).abs()).argmin()
+                    j = ((df["YC"] - target_rc[0]).abs()
+                         + (df["XC"] - target_rc[1]).abs()).argmin()
                     return df.iloc[int(j)]
 
                 rowB = find_row_by_center(cellB_center)

@@ -172,6 +172,82 @@ class TestCellExtensionOrientation(unittest.TestCase):
 
         return raw_image, labels_image, target_mask
 
+    def _make_inputs_multi_extension(self):
+        """
+        Grid where the number of extensions grows with y (1-4), and
+        the angular spread of extensions grows with x (from a single
+        direction to multiple directions).
+        """
+        width, height = 3000, 2000
+        labels_image = np.zeros((height, width), dtype=np.int32)
+
+        n_rows, n_cols = 5, 10
+        circle_radius = 15
+        extension_length = 80
+        margin = circle_radius + extension_length + 10  # a bit of safety margin
+
+        x_space = (width - 2 * margin) / (n_cols - 1) if n_cols > 1 else 0
+        y_space = (height - 2 * margin) / (n_rows - 1) if n_rows > 1 else 0
+
+        center_x, center_y = width // 2, height // 2
+
+        label_count = 1
+        for i in range(n_rows):
+            for j in range(n_cols):
+                cx = int(margin + j * x_space)
+                cy = int(margin + i * y_space)
+
+                # Draw cell body
+                rr, cc = disk((cy, cx), circle_radius, shape=labels_image.shape)
+                labels_image[rr, cc] = label_count
+
+                # Determine number of extensions based on row (y)
+                v_norm = i / (n_rows - 1) if n_rows > 1 else 0
+                num_extensions = 1 + int(round(3 * v_norm))  # Gives 1, 2, 3, or 4
+
+                # Determine spread of extensions based on col (x)
+                u_norm = j / (n_cols - 1) if n_cols > 1 else 0
+                max_spread_angle = math.pi  # Spread over a half circle
+                spread_angle = u_norm * max_spread_angle
+
+                # Base direction: point towards the center of the image
+                vec_to_center = np.array([center_x - cx, center_y - cy])
+                # Handle the case where the cell is at the center
+                if np.linalg.norm(vec_to_center) < 1e-6:
+                    base_angle = 0
+                else:
+                    base_angle = np.arctan2(vec_to_center[1], vec_to_center[0])
+
+                # Draw extensions
+                for m in range(num_extensions):
+                    if num_extensions == 1:
+                        offset = 0
+                    else:
+                        # Spread angles evenly from -spread/2 to +spread/2
+                        offset = (m / (num_extensions - 1) - 0.5) * spread_angle
+
+                    angle = base_angle + offset
+                    extension_dir = np.array([math.cos(angle), math.sin(angle)])
+
+                    start_x = cx + int(circle_radius * extension_dir[0])
+                    start_y = cy + int(circle_radius * extension_dir[1])
+                    end_x = start_x + int(extension_length * extension_dir[0])
+                    end_y = start_y + int(extension_length * extension_dir[1])
+
+                    rr_line, cc_line = line(start_y, start_x, end_y, end_x)
+                    # Ensure line is within bounds for safety
+                    valid_indices = (rr_line >= 0) & (rr_line < height) & (cc_line >= 0) & (cc_line < width)
+                    labels_image[rr_line[valid_indices], cc_line[valid_indices]] = label_count
+
+                label_count += 1
+
+        # Define a central target mask
+        target_mask = np.zeros((height, width), dtype=bool)
+        rr_t, cc_t = disk((center_y, center_x), 100, shape=target_mask.shape)
+        target_mask[rr_t, cc_t] = True
+
+        return labels_image, labels_image, target_mask
+
     def _run_case(self, raw_image, labels_image, target_mask, output_name):
         for include_target in (False, True):
             with self.subTest(include_target=include_target):
@@ -215,6 +291,14 @@ class TestCellExtensionOrientation(unittest.TestCase):
         """New dataset: sparser along x, longer extensions along y."""
         raw_image, labels_image, target_mask = self._make_inputs_uneven()
         self._run_case(raw_image, labels_image, target_mask, "generated_uneven")
+
+    def test_multi_extension_grid_with_and_without_target(self):
+        """
+        New dataset: number of extensions grows along y,
+        angular spread grows along x.
+        """
+        raw_image, labels_image, target_mask = self._make_inputs_multi_extension()
+        self._run_case(raw_image, labels_image, target_mask, "generated_multi_extension")
 
     def test_angle_between(self):
         print(angle_between((1, 0), (0, 1)))

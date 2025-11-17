@@ -92,24 +92,24 @@ For each segmented region:
 
 This file contains detailed metrics for each individual cell (or region) identified in the image.
 
-| **Column Name** | **Description** |
-| :--- | :--- |
-| `Label` | A unique integer identifier for each detected cell region. |
-| `Area in px²` | The total area of the cell region in square pixels. |
-| `Area in um²` | The total area of the cell region in square micrometers (µm²). |
-| `Mean` | The mean pixel intensity within the cell region. |
-| `XM`, `YM` | The (X, Y) coordinates of the region's geometric center (centroid). |
-| `Circ.` | **Circularity** of the region, a value from 0 (a line) to 1 (a perfect circle). |
-| `%Area` | The percentage of the region's bounding box that is filled by the cell's pixels. |
-| `MScore` | A custom "morphology score" calculated from the cell's circularity and area. |
-| `X center biggest circle`, `Y center biggest circle` | The (X, Y) coordinates for the center of the largest circle that can be inscribed within the cell. |
+| **Column Name**         | **Description** |
+|:------------------------| :--- |
+| `Label`                 | A unique integer identifier for each detected cell region. |
+| `Area in px²`           | The total area of the cell region in square pixels. |
+| `Area in um²`           | The total area of the cell region in square micrometers (µm²). |
+| `Mean`                  | The mean pixel intensity within the cell region. |
+| `XM`, `YM`              | The (X, Y) coordinates of the region's geometric center (centroid). |
+| `Circ.`                 | **Circularity** of the region, a value from 0 (a line) to 1 (a perfect circle). |
+| `%Area`                 | The percentage of the region's bounding box that is filled by the cell's pixels. |
+| `MScore`                | A custom "morphology score" calculated from the cell's circularity and area. |
+| `XC`, `YC`              | The (X, Y) coordinates for the center of the largest circle that can be inscribed within the cell. |
 | `Radius biggest circle` | The radius (in pixels) of the largest inscribed circle. |
-| `Length cell vector` | The length (in pixels) of the primary orientation vector calculated for the cell's extensions. |
-| `Anisotropy` | A measure of the cell's elongation, ranging from 0 (not elongated) to 1 (highly elongated). |
-| `Rolling ball angle` | The angle of the local target vector (derived from the target image gradient), measured in **degrees** (0-360) from the upward vertical axis. |
-| `Absolute angle` | The absolute orientation of the cell's main vector, measured in **degrees** (0-360) from the upward vertical axis. |
-| `Relative angle` | The absolute difference between the `Absolute angle` and the `Rolling ball angle` in **degrees**, indicating how aligned the cell is to the target vector. |
-| `DX`, `DY` | The X and Y components of the cell's orientation vector (`Length cell vector`). |
+| `Length cell vector`    | The length (in pixels) of the primary orientation vector calculated for the cell's extensions. |
+| `Anisotropy`            | A measure of the cell's elongation, ranging from 0 (not elongated) to 1 (highly elongated). |
+| `Rolling ball angle`    | The angle of the local target vector (derived from the target image gradient), measured in **degrees** (0-360) from the upward vertical axis. |
+| `Absolute angle`        | The absolute orientation of the cell's main vector, measured in **degrees** (0-360) from the upward vertical axis. |
+| `Relative angle`        | The absolute difference between the `Absolute angle` and the `Rolling ball angle` in **degrees**, indicating how aligned the cell is to the target vector. |
+| `DX`, `DY`              | The X and Y components of the cell's orientation vector (`Length cell vector`). |
 
 ### **2. Tiled Average Data (`average_directions_tile{tile_size}.csv`)**
 

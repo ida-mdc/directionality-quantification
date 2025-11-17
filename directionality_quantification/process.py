@@ -36,7 +36,7 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
             row["MScore"] = circularity * ((row["Area in um²"] - 27) / 27)
 
         # angles from region_extension_analysis(...)
-        skeleton, center, radius, L, anisotropy, abs_rad, rel_raw, rolling_ball_angle = region_extension_analysis(region, image_target)
+        skeleton, center, radius, L, abs_rad, rel_raw, rolling_ball_angle, orientation_vector, condition_outside = region_extension_analysis(region, image_target)
 
         # --- normalize for math (canonical) ---
         rel_rad = np.abs(rel_raw) % (2 * np.pi)
@@ -50,11 +50,10 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
         dx = L * np.sin(abs_rad)
         dy = L * np.cos(abs_rad)
 
-        row["X center biggest circle"] = center[1]
-        row["Y center biggest circle"] = center[0]
+        row["XC"] = center[1]
+        row["YC"] = center[0]
         row["Radius biggest circle"] = radius
         row["Length cell vector"] = L
-        row["Anisotropy"] = anisotropy
         row["Rolling ball angle"] = rolling_ball_deg
 
         row["Absolute angle"] = abs_deg
@@ -73,64 +72,37 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
     return cell_table
 
 
-def orientation_with_anisotropy_from_root(skeleton_image, root_point):
+def calculate_average_extension_vector(skeleton_points, root):
     """
-    Args:
-        skeleton_image: 2D binary array
-        root_point: (y, x) in image coords
-
-    Returns:
-        anisotropy: float in [0,1]
-        net_vector_yx: np.ndarray([dy, dx])  # (y, x) order
-        net_length: float
+    Calculates a vector representing the average coherent extension.
+    Its direction is the average direction of all extension pixels.
+    Its length is the maximum extension length modulated by a coherence score.
     """
-    sk = skeleton_image.astype(bool)
-    ys, xs = np.where(sk)
-    n = len(xs)
-    if n < 2:
-        return 0.0, np.array([0.0, 0.0]), 0.0
+    points = np.argwhere(skeleton_points)
+    num_points = points.shape[0]
+    if num_points == 0:
+        return np.array([0.0, 0.0])
 
-    pts = np.column_stack((ys, xs)).astype(float)  # (y, x)
-    root = np.array(root_point, dtype=float)       # (y, x)
+    # --- Part 1: Find Average Direction and Coherence ---
+    points_centered = points - root
+    norms = np.linalg.norm(points_centered, axis=1)
+    non_zero_norms = norms > 1e-6
+    unit_vectors = points_centered[non_zero_norms] / norms[non_zero_norms, np.newaxis]
+    sum_of_units = np.sum(unit_vectors, axis=0)
+    coherence_vector = sum_of_units / num_points
 
-    # PCA in (y, x)
-    mean = pts.mean(axis=0)
-    X = pts - mean
-    C = (X.T @ X) / n
-    vals, vecs = np.linalg.eigh(C)
-    order = np.argsort(vals)
-    lam_min, lam_max = vals[order[0]], vals[order[1]]
+    coherence_score = np.linalg.norm(coherence_vector)
+    average_direction = coherence_vector / coherence_score if coherence_score > 1e-6 else np.array([0., 0.])
 
-    # major axis (unit) in (y, x)
-    u_yx = vecs[:, order[1]]
-    u_yx /= (np.linalg.norm(u_yx) + 1e-12)
+    # --- Part 2: Find Maximum Extension Length ---
+    # We use the norms we already calculated.
+    max_extension_length = np.max(norms)
 
-    # anisotropy
-    denom = lam_max + lam_min
-    anisotropy = 0.0 if denom <= 0 else float((lam_max - lam_min) / denom)
+    # --- Part 3: Combine Them ---
+    final_vector_length = max_extension_length * coherence_score
+    final_vector = average_direction * final_vector_length
 
-    # project onto u (all in (y, x))
-    proj = pts @ u_yx
-    proj_min, proj_max = float(proj.min()), float(proj.max())
-    proj_root = float(root @ u_yx)
-
-    # If root lies between min/max, use (right - left) for sign.
-    # If root lies outside, use the side the skeleton is on (mean vs root) for sign.
-    if proj_min <= proj_root <= proj_max:
-        left  = proj_root - proj_min   # >=0
-        right = proj_max - proj_root   # >=0
-        net_scalar = right - left      # signed
-    else:
-        # Entire skeleton is on one side of the root along the axis.
-        side_sign = 1.0 if proj.mean() > proj_root else -1.0
-        # distance to the far end on that side (positive magnitude)
-        one_side_len = max(proj_max - proj_root, proj_root - proj_min)
-        net_scalar = side_sign * one_side_len
-
-    net_vector_yx = net_scalar * u_yx
-    net_length = float(abs(net_scalar))
-    return float(anisotropy), net_vector_yx, net_length
-
+    return final_vector
 
 def region_extension_analysis(region, image_target):
     # skeletonize
@@ -141,14 +113,10 @@ def region_extension_analysis(region, image_target):
     # calculate center
     maxradius = np.max(distance_region, axis=None)
     center = np.unravel_index(np.argmax(distance_region, axis=None), distance_region.shape)
-    distance_center = np.linalg.norm(distance_region[center])
-    distances_center = np.indices(region.image.shape) - np.array(center)[:, None, None]
-    distances_center = np.apply_along_axis(np.linalg.norm, 0, distances_center)
-    # label inside/outside cell
-    condition_outside = (skeleton > 0) & (distances_center - distance_center >= 0)
+    condition_outside = (skeleton > 0)
 
-    anisotropy, orientation_vector, length = orientation_with_anisotropy_from_root(condition_outside, center)
-
+    orientation_vector = calculate_average_extension_vector(condition_outside, center)
+    length = np.linalg.norm(orientation_vector)
 
     # pixel_locations_relevant_to_direction = np.column_stack(np.where(condition_outside))
     # pixel_locations_relevant_to_direction = pixel_locations_relevant_to_direction - center
@@ -172,15 +140,15 @@ def region_extension_analysis(region, image_target):
         absolute_angle = angle_between((-1, 0), orientation_vector)
         rolling_ball_angle = angle_between((-1, 0), target_vector)
         relative_angle = angle_between(orientation_vector, target_vector)
-    return skeleton, center_translated, maxradius, length_cell_vector, anisotropy, absolute_angle, relative_angle, rolling_ball_angle
+    return skeleton, center_translated, maxradius, length_cell_vector, absolute_angle, relative_angle, rolling_ball_angle, orientation_vector, condition_outside
 
 
 def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask):
     tiles_num_y = int(shape[0] / tile_size) + 1
     tiles_num_x = int(shape[1] / tile_size) + 1
 
-    ix = ((cell_table["X center biggest circle"] - crop_extend[2]) // tile_size).astype(int)
-    iy = ((cell_table["Y center biggest circle"] - crop_extend[0]) // tile_size).astype(int)
+    ix = ((cell_table["XC"] - crop_extend[2]) // tile_size).astype(int)
+    iy = ((cell_table["YC"] - crop_extend[0]) // tile_size).astype(int)
 
     rows, counts_all, avg_lengths_all = [], [], []
     is_relative = image_target_mask is not None
@@ -239,9 +207,13 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
 
     counts_all = np.asarray(counts_all, dtype=float)
     avg_lengths_all = np.asarray(avg_lengths_all, dtype=float)
+    counts_all = counts_all[counts_all > 0]
+    avg_lengths_all = avg_lengths_all[avg_lengths_all > 0]
 
     max_count = float(np.nanpercentile(counts_all, 90))
     max_length = float(np.nanpercentile(avg_lengths_all, 90))
+
+    # print(max_count, max_length)
 
     for r in rows:
         c = r["count"]
@@ -300,7 +272,7 @@ def compute_and_write_avg_dir_tables(cell_table: DataFrame, raw_image, roi, imag
         if output:
             avg_csv = output.joinpath(f'average_directions_tile{tile_size}.csv')
             avg_df.to_csv(avg_csv, index=False)
-            print(f"Saved average directions table: {avg_csv}")
+            print(f"Saved average directions table: {Path(avg_csv).absolute()}")
 
 
     if output:
