@@ -244,9 +244,6 @@ def plot_average_directions(output_res, avg_df, bg_image,
     # Create a divider for the axes
     divider = make_axes_locatable(ax)
 
-    # Unpack ROI consistently for display:
-    # roi = [y_min, y_max, x_min, x_max] in your codebase
-    # y_min, y_max, x_min, x_max = roi
     y_min_disp, y_max_disp, x_min_disp, x_max_disp = roi_display
 
     if image_target_mask is not None:
@@ -255,7 +252,6 @@ def plot_average_directions(output_res, avg_df, bg_image,
         ax.imshow(bg_image, extent=[x_min_disp, x_max_disp, y_min_disp, y_max_disp], origin='upper', cmap="grey",
                   zorder=1)
 
-        # --- UPDATE AXIS LIMITS ---
     ax.set_xlim(x_min_disp, x_max_disp)
     ax.set_ylim(y_min_disp, y_max_disp)
 
@@ -304,8 +300,6 @@ def plot_grid_from_table(avg_df, image_target_mask,
                          divider):
     ax = plt.gca()
 
-    # --- START OF FIX ---
-    # Handle sparse grids (where min tile index > 0)
     tx = avg_df["tile_x"].astype(int).to_numpy()
     ty = avg_df["tile_y"].astype(int).to_numpy()
     min_tx, max_tx = tx.min(), tx.max()
@@ -323,26 +317,11 @@ def plot_grid_from_table(avg_df, image_target_mask,
     keep = (tx_norm >= 0) & (tx_norm < nx) & (ty_norm >= 0) & (ty_norm < ny)
     rgba[ty_norm[keep], tx_norm[keep], :] = cols[keep]
 
-    # Get the *unscaled* tile_size from the dataframe.
-    tile_size = int(avg_df["tile_size"].iloc[0])
+    y_min_disp, y_max_disp, x_min_disp, x_max_disp = roi_display
 
-    # Get the *unscaled* (display) ROI limits
-    # roi_display = [y_min(top), y_max(bottom), x_min(left), x_max(right)]
-    y_top_disp, y_bottom_disp, x_left_disp, x_right_disp = roi_display
-
-    # Calculate the grid's *true* extent based on its *unscaled* properties
-    # This might be larger than the background image!
-    # We assume the grid *origin* (min_tx, min_ty) aligns with the ROI origin (x_left_disp, y_top_disp).
-    grid_x_left = x_left_disp + min_tx * tile_size
-    grid_x_right = x_left_disp + (max_tx) * tile_size
-    grid_y_top = y_top_disp + min_ty * tile_size
-    grid_y_bottom = y_top_disp + (max_ty) * tile_size
-
-    # Draw the overlay image using its *true* calculated extent
-    # extent = [left, right, bottom, top]
     ax.imshow(
         rgba,
-        extent=[grid_x_left, grid_x_right, grid_y_top, grid_y_bottom],
+        extent=[x_min_disp, x_max_disp, y_min_disp, y_max_disp],
         origin='upper',
         interpolation='nearest',
         resample=False,
