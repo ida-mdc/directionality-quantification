@@ -28,21 +28,24 @@ def _write_inputs(base_dir: Path, raw_image, labels_image, target_mask):
 
 class TestCellExtensionOrientation(unittest.TestCase):
     def setUp(self):
-        self.output_dir = TEST_DIR / "sample" / "result"
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.test_results_dir = TEST_DIR / "test_results"
+        self.test_results_dir.mkdir(parents=True, exist_ok=True)
 
     def test_example_run(self):
+        output_dir = self.test_results_dir / "sample"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
         sys.argv = ["directionality-quantification",
-            "--input_raw", str(PROJECT_ROOT / "sample" / "input_raw.tif"),
-            "--input_labeling", str(PROJECT_ROOT / "sample" / "input_labels.tif"),
-            "--input_target", str(PROJECT_ROOT / "sample" / "input_target.tif"),
-            "--output", str(self.output_dir),
+            "--input_raw", str(PROJECT_ROOT / "report" / "test_data" / "sample" / "input_raw.tif"),
+            "--input_labeling", str(PROJECT_ROOT / "report" / "test_data" / "sample" / "input_labels.tif"),
+            "--input_target", str(PROJECT_ROOT / "report" / "test_data" / "sample" / "input_target.tif"),
+            "--output", str(output_dir),
             "--pixel_in_micron", "0.65",
             "--output_res", "10:7"]
 
         run()
 
-        output_files = list(self.output_dir.glob("*.png"))
+        output_files = list(output_dir.glob("*.png"))
         self.assertGreater(len(output_files), 0, "Output directory should contain result images.")
 
     def _make_inputs_uniform(self):
@@ -236,7 +239,8 @@ class TestCellExtensionOrientation(unittest.TestCase):
     def _run_case(self, raw_image, labels_image, target_mask, output_name):
         for include_target in (False, True):
             with self.subTest(include_target=include_target):
-                temp_dir = TEST_DIR / (output_name + ("_with_target" if include_target else "_without_target"))
+                test_case_name = output_name + ("_with_target" if include_target else "_without_target")
+                temp_dir = self.test_results_dir / test_case_name
                 output_dir = temp_dir / "output"
                 output_dir.mkdir(exist_ok=True, parents=True)
 

@@ -17,8 +17,8 @@ directionality-quantification --help
 Example use case:
 
 ```
-directionality-quantification --input_raw sample/input_raw.tif --input_labeling sample/input_labels.tif --input_target 
-sample/input_target.tif --output sample/result --pixel_in_micron 0.65 --output_res 7:10
+directionality-quantification --input_raw report/test_data/sample/input_raw.tif --input_labeling report/test_data/sample/input_labels.tif --input_target 
+report/test_data/sample/input_target.tif --output report/test_data/sample --pixel_in_micron 0.65 --output_res 7:10
 ```
 
 Generate exemplary output on sample data via unit test:
@@ -145,3 +145,28 @@ For each tile size specified, a separate CSV file is generated. These files summ
 3. **ROIs (`ROIs.png`)**:
    - Highlights the selected regions of interest with color-coded bounding boxes.
 
+
+
+## Interactive HTML Report
+
+An interactive HTML report is available to visualize and explore your analysis results. The report is hosted via GitHub Pages.
+
+### Viewing Reports
+
+**Example Report:**
+- [View example report with sample dataset](https://ida-mdc.github.io/directionality-quantification/report/?data=https://ida-mdc.github.io/directionality-quantification/report/test_data/sample/cells.csv)
+
+**Using Your Own Data:**
+To view your own analysis results:
+1. Generate a `cells.csv` file using the tool
+2. Open the [interactive report](https://ida-mdc.github.io/directionality-quantification/report/)
+3. Click the "Load CSV File" button and select your `cells.csv` file
+
+### Features
+
+The interactive report includes:
+- **Summary Statistics**: Total cells, mean area, circularity, vector length, and distance to target
+- **Distribution Charts**: Histograms for area, circularity, angle, and vector length
+- **Filtering**: Filter cells by extension length with real-time visualization updates
+- **Cell Gallery**: Visual grid of cell thumbnails (20×20) with sorting options
+- **Relative Angle Analysis**: Heatmap visualization of relative angle vs distance to target (when target data is available)

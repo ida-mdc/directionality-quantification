@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Directionality Quantification</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdn.tailwindcss.com" crossorigin="anonymous"></script>
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f7f9; }
+        .container { max-width: 1600px; margin: 0 auto; padding: 20px; }
+        .card { background-color: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 20px; margin-bottom: 20px; }
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            width: 100%;
+            margin-bottom: 1.5rem;
+        }
+        .gallery-grid { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; width: 100%; }
+        .gallery-item { 
+            position: relative;
+            aspect-ratio: 1; 
+            border: 1px solid #e2e8f0; 
+            border-radius: 2px; 
+            overflow: hidden; 
+            background: #fff; 
+            transition: transform 0.1s, box-shadow 0.1s;
+            cursor: pointer;
+        }
+        .gallery-item:hover { 
+            transform: scale(1.05); 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); 
+            z-index: 10; 
+            border-color: #3b82f6;
+        }
+        .gallery-thumb { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; display: block; }
+        .gallery-tooltip {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 4px 6px;
+            font-size: 0.65rem;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+            text-align: center;
+        }
+        .gallery-item:hover .gallery-tooltip {
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="text-3xl font-bold text-gray-800 mb-2">Directionality Quantification</h1>
+        <p id="status" class="text-sm text-blue-600 mb-6">Load a cells.csv file to view the report</p>
+
+        <div class="flex flex-col md:flex-row space-y-3 md:space-y-0 md:space-x-4 mb-6 p-4 bg-gray-100 rounded-lg shadow-inner">
+            <h4 class="text-lg font-semibold text-gray-700">Data Source:</h4>
+            <div class="flex items-center space-x-2">
+                <input type="file" id="csv-file-input" accept=".csv" class="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                <button id="load-csv-button" class="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition duration-150">Load CSV File</button>
+            </div>
+        </div>
+
+        <div id="filter-section" class="card mb-6" style="display:none;">
+            <h3 class="text-xl font-semibold mb-4">Filter by Extension Length</h3>
+            <div class="flex flex-col md:flex-row items-start md:items-center space-y-3 md:space-y-0 md:space-x-4 mb-4">
+                <div class="flex items-center space-x-2">
+                    <label class="text-sm font-semibold">Min Length:</label>
+                    <input type="number" id="filter-min-length" value="0" step="0.1" class="p-2 border rounded shadow-sm text-sm w-32 bg-gray-50"/>
+                    <span id="filter-min-unit" class="text-sm text-gray-600">µm</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <label class="text-sm font-semibold">Max Length:</label>
+                    <input type="number" id="filter-max-length" value="" step="0.1" class="p-2 border rounded shadow-sm text-sm w-32 bg-gray-50" placeholder="No limit"/>
+                    <span id="filter-max-unit" class="text-sm text-gray-600">µm</span>
+                </div>
+                <button id="apply-filter-button" class="px-4 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition duration-150">Apply Filter</button>
+            </div>
+            <div id="filter-stats" class="text-sm text-gray-600 mb-4">
+                <span id="filter-included-count">-</span> cells included, <span id="filter-excluded-count">-</span> cells excluded
+            </div>
+            <div id="length-distribution-filter-card" class="mb-4">
+                <h4 class="text-lg font-semibold mb-2">Length Distribution (Included vs Excluded)</h4>
+                <div id="length-distribution-filter-chart" class="h-[300px]"></div>
+            </div>
+        </div>
+
+        <div id="summary-section" style="display:none;">
+            <div class="summary-grid">
+                <div class="card bg-blue-50 border-blue-200 border !mb-0 text-center py-4">
+                    <h4 class="text-gray-500 text-xs uppercase font-bold tracking-wider">Total Cells</h4>
+                    <p class="text-3xl font-bold text-gray-800 mt-1" id="sum-cells">-</p>
+                </div>
+                <div class="card bg-gray-50 border-gray-200 border !mb-0 text-center py-4">
+                    <h4 class="text-gray-500 text-xs uppercase font-bold tracking-wider">Mean Area (µm²)</h4>
+                    <p class="text-3xl font-bold text-gray-600 mt-1" id="sum-area">-</p>
+                </div>
+                <div class="card bg-green-50 border-green-200 border !mb-0 text-center py-4">
+                    <h4 class="text-gray-500 text-xs uppercase font-bold tracking-wider">Mean Circularity</h4>
+                    <p class="text-3xl font-bold text-green-700 mt-1" id="sum-circ">-</p>
+                </div>
+                <div class="card bg-purple-50 border-purple-200 border !mb-0 text-center py-4">
+                    <h4 class="text-gray-500 text-xs uppercase font-bold tracking-wider">Mean Vector Length</h4>
+                    <p class="text-3xl font-bold text-purple-700 mt-1" id="sum-length">-</p>
+                </div>
+                <div class="card bg-orange-50 border-orange-200 border !mb-0 text-center py-4" id="distance-card" style="display:none;">
+                    <h4 class="text-gray-500 text-xs uppercase font-bold tracking-wider">Mean Distance to Target</h4>
+                    <p class="text-3xl font-bold text-orange-700 mt-1" id="sum-distance">-</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div id="area-card" class="card">
+                <h3 class="text-xl font-semibold mb-3">Area Distribution</h3>
+                <div id="area-chart" class="h-[350px]"></div>
+            </div>
+
+            <div id="circularity-card" class="card">
+                <h3 class="text-xl font-semibold mb-3">Circularity Distribution</h3>
+                <div id="circularity-chart" class="h-[350px]"></div>
+            </div>
+
+            <div id="angle-card" class="card">
+                <h3 class="text-xl font-semibold mb-3" id="angle-chart-title">Angle Distribution</h3>
+                <div id="angle-chart" class="h-[350px]"></div>
+            </div>
+
+            <div id="length-card" class="card">
+                <h3 class="text-xl font-semibold mb-3">Vector Length Distribution (Filtered)</h3>
+                <div id="length-chart" class="h-[350px]"></div>
+            </div>
+
+            <div id="relative-angle-distance-card" class="card col-span-1 md:col-span-2" style="display:none;">
+                <h3 class="text-xl font-semibold mb-3">Relative Angle vs Distance to Target</h3>
+                <div id="relative-angle-distance-chart" class="h-[350px]"></div>
+            </div>
+        </div>
+
+        <div id="gallery-card" class="card">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-4">
+                <h3 class="text-xl font-semibold">Cell Gallery (20×20)</h3>
+                <div class="flex flex-wrap gap-2 mt-2 md:mt-0">
+                    <select id="gallery-sort-select" class="p-2 border rounded shadow-sm text-sm w-48 bg-gray-50">
+                        <option value="Area in um²">Sort by Area</option>
+                        <option value="Circ.">Sort by Circularity</option>
+                        <option value="Length cell vector">Sort by Vector Length</option>
+                        <option value="Absolute angle">Sort by Angle</option>
+                    </select>
+                    <select id="gallery-order-select" class="p-2 border rounded shadow-sm text-sm w-32 bg-gray-50">
+                        <option value="asc">Ascending</option>
+                        <option value="desc">Descending</option>
+                    </select>
+                    <label class="text-sm font-semibold self-center flex items-center space-x-2">
+                        <input type="checkbox" id="gallery-random-sample" class="w-4 h-4"/>
+                        <span>Random Sample</span>
+                    </label>
+                </div>
+            </div>
+            <div id="gallery-container" class="gallery-grid p-1">
+                <p class="text-gray-500">Loading cells...</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        let cellData = [];
+        let filteredCellData = [];
+        let pixelInMicron = null; // Will be detected from data
+
+        function safeValue(val) {
+            if (val === null || val === undefined || isNaN(val)) return null;
+            return typeof val === 'number' ? val : parseFloat(val);
+        }
+
+        // Get length in µm (prefer µm column, convert from px if needed)
+        function getLengthInUm(row) {
+            if (row['Length cell vector (um)'] !== undefined && row['Length cell vector (um)'] !== null) {
+                return safeValue(row['Length cell vector (um)']);
+            }
+            // Convert from pixels if we have the conversion factor
+            if (pixelInMicron !== null) {
+                const lengthPx = safeValue(row['Length cell vector']);
+                return lengthPx !== null ? lengthPx * pixelInMicron : null;
+            }
+            return null;
+        }
+        
+        // Apply filter and update all visualizations
+        function applyFilter() {
+            const minLength = parseFloat(document.getElementById('filter-min-length').value) || 0;
+            const maxLengthInput = document.getElementById('filter-max-length').value;
+            const maxLength = maxLengthInput === '' ? Infinity : parseFloat(maxLengthInput);
+            
+            filteredCellData = cellData.filter(row => {
+                const length = getLengthInUm(row);
+                if (length === null) return false;
+                return length >= minLength && length <= maxLength;
+            });
+            
+            const included = filteredCellData.length;
+            const excluded = cellData.length - included;
+            document.getElementById('filter-included-count').textContent = included.toLocaleString();
+            document.getElementById('filter-excluded-count').textContent = excluded.toLocaleString();
+            
+            // Update length distribution filter plot
+            updateLengthDistributionFilter();
+            
+            // Update all other visualizations with filtered data
+            renderSummary(filteredCellData);
+            renderCharts(filteredCellData);
+            renderGallery(filteredCellData);
+        }
+        
+        // Update length distribution showing included vs excluded
+        function updateLengthDistributionFilter() {
+            const minLength = parseFloat(document.getElementById('filter-min-length').value) || 0;
+            const maxLengthInput = document.getElementById('filter-max-length').value;
+            const maxLength = maxLengthInput === '' ? Infinity : parseFloat(maxLengthInput);
+            
+            const allLengths = cellData.map(d => getLengthInUm(d)).filter(v => v !== null);
+            const includedLengths = filteredCellData.map(d => getLengthInUm(d)).filter(v => v !== null);
+            const excludedLengths = cellData.filter(row => {
+                const length = getLengthInUm(row);
+                return length !== null && (length < minLength || length > maxLength);
+            }).map(d => getLengthInUm(d)).filter(v => v !== null);
+            
+            if (allLengths.length > 0) {
+                // Calculate shared bins from all data
+                const minVal = Math.min(...allLengths);
+                const maxVal = Math.max(...allLengths);
+                const nBins = 30;
+                const binSize = (maxVal - minVal) / nBins;
+                
+                // Create bin edges
+                const binEdges = Array.from({length: nBins + 1}, (_, i) => minVal + i * binSize);
+                
+                // Count values in each bin for included
+                const includedCounts = Array(nBins).fill(0);
+                includedLengths.forEach(val => {
+                    let binIdx = Math.min(Math.floor((val - minVal) / binSize), nBins - 1);
+                    if (val === maxVal) binIdx = nBins - 1; // Handle edge case
+                    includedCounts[binIdx]++;
+                });
+                
+                // Count values in each bin for excluded
+                const excludedCounts = Array(nBins).fill(0);
+                excludedLengths.forEach(val => {
+                    let binIdx = Math.min(Math.floor((val - minVal) / binSize), nBins - 1);
+                    if (val === maxVal) binIdx = nBins - 1; // Handle edge case
+                    excludedCounts[binIdx]++;
+                });
+                
+                // Use bin centers for x-axis
+                const binCenters = Array.from({length: nBins}, (_, i) => minVal + (i + 0.5) * binSize);
+                
+                Plotly.newPlot('length-distribution-filter-chart', [
+                    {
+                        x: binCenters,
+                        y: excludedCounts,
+                        type: 'bar',
+                        name: 'Excluded',
+                        marker: { color: '#ef4444' },
+                        width: binSize * 0.9
+                    },
+                    {
+                        x: binCenters,
+                        y: includedCounts,
+                        type: 'bar',
+                        name: 'Included',
+                        marker: { color: '#10b981' },
+                        width: binSize * 0.9
+                    }
+                ], {
+                    title: 'Length Distribution: Included vs Excluded',
+                    xaxis: { title: 'Length (µm)' },
+                    yaxis: { title: 'Count' },
+                    barmode: 'stack',
+                    margin: {t:30, b:40, l:50, r:20}
+                });
+            }
+        }
+
+        // Summary statistics
+        function renderSummary(data) {
+            const totalCells = data.length;
+            const meanArea = data.filter(d => d['Area in um²'] !== null).reduce((sum, d) => sum + safeValue(d['Area in um²']), 0) / data.filter(d => d['Area in um²'] !== null).length || 0;
+            const meanCirc = data.filter(d => d['Circ.'] !== null).reduce((sum, d) => sum + safeValue(d['Circ.']), 0) / data.filter(d => d['Circ.'] !== null).length || 0;
+            const lengths = data.map(d => getLengthInUm(d)).filter(v => v !== null);
+            const meanLength = lengths.length > 0 ? lengths.reduce((sum, d) => sum + d, 0) / lengths.length : 0;
+            
+            // Distance to target (show if available)
+            const distanceCol = data[0] && data[0]['Distance to target (um)'] !== undefined ? 'Distance to target (um)' : 
+                               (data[0] && data[0]['Distance to target'] !== undefined ? 'Distance to target' : null);
+            const distanceCard = document.getElementById('distance-card');
+            if (distanceCol && data.length > 0) {
+                const distances = data.map(d => safeValue(d[distanceCol])).filter(v => v !== null);
+                if (distances.length > 0) {
+                    const meanDistance = distances.reduce((sum, d) => sum + d, 0) / distances.length;
+                    document.getElementById('sum-distance').textContent = meanDistance.toFixed(1) + (distanceCol.includes('um') ? ' µm' : ' px');
+                    distanceCard.style.display = 'block';
+                }
+            }
+
+            document.getElementById('sum-cells').textContent = totalCells.toLocaleString();
+            document.getElementById('sum-area').textContent = meanArea.toFixed(1);
+            document.getElementById('sum-circ').textContent = meanCirc.toFixed(3);
+            document.getElementById('sum-length').textContent = meanLength.toFixed(2);
+        }
+
+        // Charts
+        function renderCharts(data) {
+            // Area distribution
+            const areas = data.map(d => safeValue(d['Area in um²'])).filter(v => v !== null);
+            if (areas.length > 0) {
+                Plotly.newPlot('area-chart', [{
+                    x: areas,
+                    type: 'histogram',
+                    marker: { color: '#3b82f6' }
+                }], {
+                    title: 'Cell Area Distribution',
+                    xaxis: { title: 'Area (µm²)' },
+                    yaxis: { title: 'Count' },
+                    margin: {t:30, b:40, l:50, r:20}
+                });
+            }
+
+            // Circularity distribution
+            const circs = data.map(d => safeValue(d['Circ.'])).filter(v => v !== null);
+            if (circs.length > 0) {
+                Plotly.newPlot('circularity-chart', [{
+                    x: circs,
+                    type: 'histogram',
+                    marker: { color: '#10b981' }
+                }], {
+                    title: 'Circularity Distribution',
+                    xaxis: { title: 'Circularity (dimensionless)' },
+                    yaxis: { title: 'Count' },
+                    margin: {t:30, b:40, l:50, r:20}
+                });
+            }
+
+            // Angle distribution - prefer relative angle if available, otherwise absolute
+            let angles = data.map(d => safeValue(d['Relative angle'])).filter(v => v !== null);
+            let angleType = 'Relative';
+            let angleTitle = 'Relative Angle Distribution';
+            
+            // If no relative angle data, fall back to absolute angle
+            if (angles.length === 0) {
+                angles = data.map(d => safeValue(d['Absolute angle'])).filter(v => v !== null);
+                angleType = 'Absolute';
+                angleTitle = 'Absolute Angle Distribution';
+            }
+            
+            if (angles.length > 0) {
+                // Update title
+                document.getElementById('angle-chart-title').textContent = angleTitle;
+                
+                Plotly.newPlot('angle-chart', [{
+                    x: angles,
+                    type: 'histogram',
+                    marker: { color: '#8b5cf6' },
+                    nbinsx: 36
+                }], {
+                    title: angleTitle,
+                    xaxis: { title: `${angleType} Angle (degrees)` },
+                    yaxis: { title: 'Count' },
+                    margin: {t:30, b:40, l:50, r:20}
+                });
+            }
+            
+            // Relative angle vs distance to target (heatmap instead of scatter)
+            if (data.length > 0) {
+                const distanceCol = data[0]['Distance to target (um)'] !== undefined && data[0]['Distance to target (um)'] !== null ? 'Distance to target (um)' : 
+                                   (data[0]['Distance to target'] !== undefined && data[0]['Distance to target'] !== null ? 'Distance to target' : null);
+                
+                if (distanceCol) {
+                    const pairs = data.map(d => ({
+                        dist: safeValue(d[distanceCol]),
+                        angle: safeValue(d['Relative angle'])
+                    })).filter(p => p.dist !== null && p.angle !== null);
+                    
+                    if (pairs.length > 0) {
+                        const distances = pairs.map(p => p.dist);
+                        const relAngles = pairs.map(p => p.angle);
+                        
+                        const relAngleDistanceCard = document.getElementById('relative-angle-distance-card');
+                        relAngleDistanceCard.style.display = 'block';
+                        
+                        // Create heatmap
+                        const distMin = Math.min(...distances);
+                        const distMax = Math.max(...distances);
+                        const angleMin = Math.min(...relAngles);
+                        const angleMax = Math.max(...relAngles);
+                        
+                        const nBinsX = 30;
+                        const nBinsY = 30;
+                        const distBinSize = (distMax - distMin) / nBinsX;
+                        const angleBinSize = (angleMax - angleMin) / nBinsY;
+                        
+                        // Create 2D histogram
+                        const heatmapData = Array(nBinsY).fill(0).map(() => Array(nBinsX).fill(0));
+                        pairs.forEach(p => {
+                            const distBin = Math.min(Math.floor((p.dist - distMin) / distBinSize), nBinsX - 1);
+                            const angleBin = Math.min(Math.floor((p.angle - angleMin) / angleBinSize), nBinsY - 1);
+                            heatmapData[angleBin][distBin]++;
+                        });
+                        
+                        Plotly.newPlot('relative-angle-distance-chart', [{
+                            z: heatmapData,
+                            x: Array.from({length: nBinsX}, (_, i) => distMin + (i + 0.5) * distBinSize),
+                            y: Array.from({length: nBinsY}, (_, i) => angleMin + (i + 0.5) * angleBinSize),
+                            type: 'heatmap',
+                            colorscale: 'Viridis',
+                            colorbar: { title: 'Count' }
+                        }], {
+                            title: 'Relative Angle vs Distance to Target',
+                            xaxis: { title: distanceCol.includes('um') ? 'Distance to Target (µm)' : 'Distance to Target (px)' },
+                            yaxis: { title: 'Relative Angle (degrees)' },
+                            margin: {t:30, b:40, l:50, r:50}
+                        });
+                    }
+                }
+            }
+
+            // Vector length distribution (filtered data only)
+            const lengths = data.map(d => getLengthInUm(d)).filter(v => v !== null);
+            if (lengths.length > 0) {
+                Plotly.newPlot('length-chart', [{
+                    x: lengths,
+                    type: 'histogram',
+                    marker: { color: '#f59e0b' }
+                }], {
+                    title: 'Vector Length Distribution (Filtered)',
+                    xaxis: { title: 'Length (µm)' },
+                    yaxis: { title: 'Count' },
+                    margin: {t:30, b:40, l:50, r:20}
+                });
+            }
+        }
+
+        // Gallery
+        function renderGallery(data) {
+            const container = document.getElementById('gallery-container');
+            const sortCol = document.getElementById('gallery-sort-select').value;
+            const order = document.getElementById('gallery-order-select').value;
+            const useRandomSample = document.getElementById('gallery-random-sample').checked;
+            const MAX_GALLERY_CELLS = 400; // 20x20
+            
+            // Data is already filtered by the main filter, no need to filter again here
+            const filtered = data;
+            
+            container.innerHTML = '';
+            if (filtered.length === 0) {
+                container.innerHTML = '<p class="text-gray-500 col-span-20">No cells match the filter criteria.</p>';
+                return;
+            }
+            
+            let cellsToShow;
+            if (filtered.length <= MAX_GALLERY_CELLS) {
+                // If we have fewer than 400 cells, just sort and show all
+                cellsToShow = [...filtered].sort((a, b) => {
+                    let va = safeValue(a[sortCol]), vb = safeValue(b[sortCol]);
+                    return (order === 'asc' ? 1 : -1) * ((va > vb ? 1 : (va < vb ? -1 : 0)));
+                });
+            } else {
+                // More than 400 cells
+                if (useRandomSample) {
+                    // Random sampling for nice distribution, then sort the sampled cells
+                    const shuffled = [...filtered].sort(() => Math.random() - 0.5);
+                    const sampled = shuffled.slice(0, MAX_GALLERY_CELLS);
+                    // Sort the randomly sampled cells
+                    cellsToShow = sampled.sort((a, b) => {
+                        let va = safeValue(a[sortCol]), vb = safeValue(b[sortCol]);
+                        return (order === 'asc' ? 1 : -1) * ((va > vb ? 1 : (va < vb ? -1 : 0)));
+                    });
+                } else {
+                    // Sort and take top 400
+                    const sorted = [...filtered].sort((a, b) => {
+                        let va = safeValue(a[sortCol]), vb = safeValue(b[sortCol]);
+                        return (order === 'asc' ? 1 : -1) * ((va > vb ? 1 : (va < vb ? -1 : 0)));
+                    });
+                    cellsToShow = sorted.slice(0, MAX_GALLERY_CELLS);
+                }
+            }
+            
+            // Fill exactly 400 cells (pad with empty divs if needed)
+            for (let i = 0; i < MAX_GALLERY_CELLS; i++) {
+                const item = document.createElement('div');
+                item.className = 'gallery-item';
+                
+                if (i < cellsToShow.length) {
+                    const row = cellsToShow[i];
+                    const img = document.createElement('img');
+                    img.className = 'gallery-thumb';
+                    if (row.thumbnail) {
+                        img.src = row.thumbnail;
+                    } else {
+                        img.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#eee"/></svg>';
+                    }
+                    
+                    // Tooltip with label and value (shown on hover)
+                    const tooltip = document.createElement('div');
+                    tooltip.className = 'gallery-tooltip';
+                    let val = safeValue(row[sortCol]);
+                    if (typeof val === 'number') {
+                        val = val.toFixed(2);
+                    } else {
+                        val = val || 'N/A';
+                    }
+                    const labelVal = row.Label || 'N/A';
+                    tooltip.textContent = `Label ${labelVal}: ${val}`;
+                    
+                    item.appendChild(img);
+                    item.appendChild(tooltip);
+                } else {
+                    // Empty cell
+                    item.style.backgroundColor = '#f3f4f6';
+                    item.style.borderColor = '#e5e7eb';
+                }
+                
+                container.appendChild(item);
+            }
+        }
+
+        // CSV parsing function (handles quoted fields with commas)
+        function parseCSV(text) {
+            const lines = text.split('\n').filter(line => line.trim());
+            if (lines.length === 0) return [];
+            
+            // Parse CSV line handling quoted fields
+            function parseCSVLine(line) {
+                const result = [];
+                let current = '';
+                let inQuotes = false;
+                
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    const nextChar = line[i + 1];
+                    
+                    if (char === '"') {
+                        if (inQuotes && nextChar === '"') {
+                            current += '"';
+                            i++; // Skip next quote
+                        } else {
+                            inQuotes = !inQuotes;
+                        }
+                    } else if (char === ',' && !inQuotes) {
+                        result.push(current.trim());
+                        current = '';
+                    } else {
+                        current += char;
+                    }
+                }
+                result.push(current.trim());
+                return result;
+            }
+            
+            const headers = parseCSVLine(lines[0]).map(h => h.replace(/^"|"$/g, ''));
+            const data = [];
+            
+            for (let i = 1; i < lines.length; i++) {
+                const values = parseCSVLine(lines[i]).map(v => v.replace(/^"|"$/g, ''));
+                if (values.length !== headers.length) continue;
+                
+                const row = {};
+                headers.forEach((header, idx) => {
+                    let val = values[idx];
+                    // Try to parse as number
+                    if (val !== '' && val !== null && !isNaN(val) && val !== 'None' && val !== 'null') {
+                        const num = parseFloat(val);
+                        if (!isNaN(num)) {
+                            val = num;
+                        }
+                    }
+                    // Handle null/empty
+                    if (val === '' || val === 'None' || val === 'null') {
+                        val = null;
+                    }
+                    row[header] = val;
+                });
+                data.push(row);
+            }
+            
+            return data;
+        }
+
+        // Load and render function
+        function loadAndRender(csvText, sourceInfo = '') {
+            const status = document.getElementById('status');
+            status.textContent = "Parsing CSV...";
+            
+            try {
+                cellData = parseCSV(csvText);
+                
+                if (cellData.length === 0) {
+                    status.textContent = "Error: No data found in CSV file";
+                    return;
+                }
+                
+                // Show summary section
+                document.getElementById('summary-section').style.display = 'block';
+                
+                // Detect pixel_in_micron conversion factor
+                // If we have "Length cell vector (um)" column, calculate conversion factor
+                if (cellData[0] && cellData[0]['Length cell vector (um)'] !== undefined && 
+                    cellData[0]['Length cell vector'] !== undefined) {
+                    const lengthPx = safeValue(cellData[0]['Length cell vector']);
+                    const lengthUm = safeValue(cellData[0]['Length cell vector (um)']);
+                    if (lengthPx !== null && lengthPx !== 0 && lengthUm !== null) {
+                        pixelInMicron = lengthUm / lengthPx;
+                    }
+                }
+                
+                // Update filter unit labels (always µm)
+                document.getElementById('filter-min-unit').textContent = 'µm';
+                document.getElementById('filter-max-unit').textContent = 'µm';
+                
+                // Set initial filter to include all data
+                const allLengths = cellData.map(d => getLengthInUm(d)).filter(v => v !== null);
+                if (allLengths.length > 0) {
+                    const maxLength = Math.max(...allLengths);
+                    document.getElementById('filter-max-length').placeholder = `Max: ${maxLength.toFixed(1)} µm`;
+                }
+                
+                // Initialize filtered data to all data
+                filteredCellData = [...cellData];
+                
+                // Show filter section
+                document.getElementById('filter-section').style.display = 'block';
+                
+                // Apply initial filter (includes all)
+                applyFilter();
+                
+                // Setup event handlers
+                document.getElementById('gallery-sort-select').onchange = () => renderGallery(filteredCellData);
+                document.getElementById('gallery-order-select').onchange = () => renderGallery(filteredCellData);
+                document.getElementById('gallery-random-sample').onchange = () => renderGallery(filteredCellData);
+                
+                const statusMsg = sourceInfo 
+                    ? `Loaded ${cellData.length} cells from ${sourceInfo}`
+                    : `Loaded ${cellData.length} cells`;
+                status.textContent = statusMsg;
+            } catch (e) {
+                console.error(e);
+                status.textContent = "Error: " + e.message;
+            }
+        }
+        
+        // Load CSV from URL
+        async function loadCSVFromURL(url) {
+            const status = document.getElementById('status');
+            status.textContent = `Loading data from ${url}...`;
+            
+            try {
+                // Handle both absolute and relative URLs
+                let fetchUrl = url;
+                try {
+                    // Try to create URL object - will fail for relative URLs
+                    new URL(url);
+                } catch (e) {
+                    // If it's a relative URL, resolve it relative to current page
+                    fetchUrl = new URL(url, window.location.href).href;
+                }
+                
+                const response = await fetch(fetchUrl);
+                if (!response.ok) {
+                    throw new Error(`Failed to load CSV: ${response.status} ${response.statusText}`);
+                }
+                const csvText = await response.text();
+                
+                // Extract filename from URL for display
+                try {
+                    const urlObj = new URL(fetchUrl);
+                    const filename = urlObj.pathname.split('/').pop() || 'remote file';
+                    loadAndRender(csvText, filename);
+                } catch (e) {
+                    // Fallback if URL parsing fails
+                    const filename = url.split('/').pop() || 'remote file';
+                    loadAndRender(csvText, filename);
+                }
+            } catch (e) {
+                console.error(e);
+                status.textContent = "Error loading CSV from URL: " + e.message;
+            }
+        }
+        
+        // Check for URL parameters on page load
+        function checkURLParameters() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const dataUrl = urlParams.get('data') || urlParams.get('csv');
+            
+            if (dataUrl) {
+                // Decode URL if needed
+                const decodedUrl = decodeURIComponent(dataUrl);
+                loadCSVFromURL(decodedUrl);
+            }
+        }
+
+        // File input handler
+        document.getElementById('load-csv-button').onclick = () => {
+            const file = document.getElementById('csv-file-input').files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => loadAndRender(e.target.result);
+                reader.readAsText(file);
+            } else {
+                alert("Please select a CSV file");
+            }
+        };
+        
+        // Filter event handlers
+        document.getElementById('apply-filter-button').addEventListener('click', () => {
+            applyFilter();
+        });
+        
+        // Allow Enter key to apply filter
+        document.getElementById('filter-min-length').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') applyFilter();
+        });
+        document.getElementById('filter-max-length').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') applyFilter();
+        });
+        
+        // Check for URL parameters on page load
+        checkURLParameters();
+    </script>
+</body>
+</html>
