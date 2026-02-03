@@ -149,18 +149,30 @@ For each tile size specified, a separate CSV file is generated. These files summ
 
 ## Interactive HTML Report
 
-An interactive HTML report is available to visualize and explore your analysis results. The report is hosted via GitHub Pages.
+An interactive HTML report is available to visualize and explore your analysis results. The report can be used online via GitHub Pages or locally on your computer.
 
-### Viewing Reports
+### Online Usage
 
 **Example Report:**
 - [View example report with sample dataset](https://ida-mdc.github.io/directionality-quantification/report.html?data=https://ida-mdc.github.io/directionality-quantification/test_data/sample/cells.csv)
 
 **Using Your Own Data:**
-To view your own analysis results:
+To view your own analysis results online:
 1. Generate a `cells.csv` file using the tool
 2. Open the [interactive report](https://ida-mdc.github.io/directionality-quantification/report.html)
 3. Click the "Load CSV File" button and select your `cells.csv` file
+
+**Privacy Note:** When using the online report, all data processing happens entirely in your browser. No data is uploaded to any server - your CSV files remain on your computer.
+
+### Local Usage
+
+You can also use the HTML report locally without an internet connection:
+
+1. Generate a `cells.csv` file using the tool
+2. Open `docs/report.html` in your web browser (double-click the file or use `file://` URL)
+3. Click the "Load CSV File" button and select your `cells.csv` file
+
+The report works completely offline - all visualizations are generated client-side using JavaScript.
 
 ### Features
 
