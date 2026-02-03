@@ -36,9 +36,9 @@ class TestCellExtensionOrientation(unittest.TestCase):
         output_dir.mkdir(parents=True, exist_ok=True)
         
         sys.argv = ["directionality-quantification",
-            "--input_raw", str(PROJECT_ROOT / "report" / "test_data" / "sample" / "input_raw.tif"),
-            "--input_labeling", str(PROJECT_ROOT / "report" / "test_data" / "sample" / "input_labels.tif"),
-            "--input_target", str(PROJECT_ROOT / "report" / "test_data" / "sample" / "input_target.tif"),
+            "--input_raw", str(PROJECT_ROOT / "docs" / "test_data" / "sample" / "input_raw.tif"),
+            "--input_labeling", str(PROJECT_ROOT / "docs" / "test_data" / "sample" / "input_labels.tif"),
+            "--input_target", str(PROJECT_ROOT / "docs" / "test_data" / "sample" / "input_target.tif"),
             "--output", str(output_dir),
             "--pixel_in_micron", "0.65",
             "--output_res", "10:7"]

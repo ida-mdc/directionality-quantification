@@ -17,8 +17,8 @@ directionality-quantification --help
 Example use case:
 
 ```
-directionality-quantification --input_raw report/test_data/sample/input_raw.tif --input_labeling report/test_data/sample/input_labels.tif --input_target 
-report/test_data/sample/input_target.tif --output report/test_data/sample --pixel_in_micron 0.65 --output_res 7:10
+directionality-quantification --input_raw docs/test_data/sample/input_raw.tif --input_labeling docs/test_data/sample/input_labels.tif --input_target 
+docs/test_data/sample/input_target.tif --output docs/test_data/sample --pixel_in_micron 0.65 --output_res 7:10
 ```
 
 Generate exemplary output on sample data via unit test:
@@ -154,12 +154,12 @@ An interactive HTML report is available to visualize and explore your analysis r
 ### Viewing Reports
 
 **Example Report:**
-- [View example report with sample dataset](https://ida-mdc.github.io/directionality-quantification/report/?data=https://ida-mdc.github.io/directionality-quantification/report/test_data/sample/cells.csv)
+- [View example report with sample dataset](https://ida-mdc.github.io/directionality-quantification/report.html?data=https://ida-mdc.github.io/directionality-quantification/test_data/sample/cells.csv)
 
 **Using Your Own Data:**
 To view your own analysis results:
 1. Generate a `cells.csv` file using the tool
-2. Open the [interactive report](https://ida-mdc.github.io/directionality-quantification/report/)
+2. Open the [interactive report](https://ida-mdc.github.io/directionality-quantification/report.html)
 3. Click the "Load CSV File" button and select your `cells.csv` file
 
 ### Features
