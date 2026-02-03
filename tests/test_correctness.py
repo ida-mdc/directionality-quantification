@@ -6,47 +6,36 @@ import numpy as np
 import pandas as pd
 from skimage.draw import disk, line
 
-from directionality_quantification.main import run  # uses current CLI pipeline
-
-# helper that writes TIFFs; keep your existing import if you already have it
+from directionality_quantification.main import run
 from tests.test_sample import _write_inputs
+
+TEST_DIR = Path(__file__).parent
 
 
 class TestCellExtensionOrientation(unittest.TestCase):
     def test_three_cells_and_tiles(self):
         """
         Build three cells (three arrows) in different tiles and verify:
-        - per-cell metrics for Cell A (like before),
+        - per-cell metrics for Cell A
         - tile aggregation correctness at tile_size=100.
         """
-        # --- image + ROI ---
         H, W = 200, 400
-        roi = [0, H, 0, W]      # your module treats ROI as [x_min, x_max, y_min, y_max]
-        tile_size = 100         # -> 2 (x) by 4 (y) tiles in your current build code
+        roi = [0, H, 0, W]
+        tile_size = 100
 
-        # --- cells ---
-        # A: rightward extension (original case)
-        cellA_center = (90, 190)     # (row, col)
-        cellA_end    = (90, 240)
-
-        # B: leftward extension, different tile
+        cellA_center = (90, 190)
+        cellA_end = (90, 240)
         cellB_center = (40, 40)
-        cellB_end    = (40, 0)
-
-        # C: upward extension, another tile
+        cellB_end = (40, 0)
         cellC_center = (140, 340)
-        cellC_end    = (110, 340)
-
-        target_center = (40, 190)     # north of A
+        cellC_end = (110, 340)
+        target_center = (40, 190)
         radius = 10
 
-        # expected (keep your original for A)
         expected_abs_angle_A = 90.0
         expected_rel_angle_A = 90.0
         expected_len_A = 50.0
         expected_radius = radius
-
-        # --- build synthetic images ---
         labels_image = np.zeros((H, W), dtype=np.int32)
         raw_image = np.zeros((H, W), dtype=np.uint8)
         target_mask = np.zeros((H, W), dtype=bool)
@@ -62,10 +51,9 @@ class TestCellExtensionOrientation(unittest.TestCase):
         rr_t, cc_t = disk(target_center, radius, shape=target_mask.shape)
         target_mask[rr_t, cc_t] = True
 
-        # run twice: without and with target
         for include_target in [False, True]:
             with self.subTest(include_target=include_target):
-                temp_dir = Path("three_cells_tiles_test")
+                temp_dir = TEST_DIR / "three_cells_tiles_test"
                 output_dir = temp_dir / ("out_rel" if include_target else "out_abs")
                 output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -73,7 +61,6 @@ class TestCellExtensionOrientation(unittest.TestCase):
                     temp_dir, raw_image, labels_image, target_mask
                 )
 
-                # --- run CLI pipeline once; request only tile_size=100 to simplify outputs ---
                 old_argv = sys.argv[:]
                 try:
                     sys.argv = [
@@ -81,26 +68,21 @@ class TestCellExtensionOrientation(unittest.TestCase):
                         "--input_raw", str(raw_path),
                         "--input_labeling", str(labels_path),
                         "--output", str(output_dir),
-                        "--tiles", "100",          # ensure we get average_directions_tile100.csv
+                        "--tiles", "100",
                     ]
                     if include_target:
                         sys.argv.extend(["--input_target", str(target_path)])
                     run()
                 finally:
                     sys.argv = old_argv
-
-                # --- per-cell checks from cells.csv ---
                 cells_csv = output_dir / "cells.csv"
                 self.assertTrue(cells_csv.exists(), "cells.csv was not created.")
                 df = pd.read_csv(cells_csv)
                 self.assertEqual(len(df), 3, "Expected three cells in the results table.")
 
-                # Pick the row closest to A's center
                 idxA = ((df["YC"] - cellA_center[0]).abs()
                         + (df["XC"] - cellA_center[1]).abs()).argmin()
                 rowA = df.iloc[int(idxA)]
-
-                # geometry at A
                 self.assertAlmostEqual(rowA["XC"], cellA_center[1], delta=3,
                                        msg="Center X (cell A) is incorrect.")
                 self.assertAlmostEqual(rowA["YC"], cellA_center[0], delta=3,
@@ -115,19 +97,16 @@ class TestCellExtensionOrientation(unittest.TestCase):
                     self.assertAlmostEqual(rowA["Relative angle"], expected_rel_angle_A, delta=10,
                                            msg="Relative angle (cell A) is incorrect.")
 
-                # --- tile checks from average_directions_tile100.csv ---
                 avg_csv = output_dir / "average_directions_tile100.csv"
                 self.assertTrue(avg_csv.exists(), "average_directions_tile100.csv was not created.")
                 avg_df = pd.read_csv(avg_csv)
 
                 def to_tile_indices(center_rc, tile_size):
-                    r, c = center_rc  # (row, col)
+                    r, c = center_rc
                     ix = int(c // tile_size)
                     iy = int(r // tile_size)
                     return ix, iy
 
-                # pull per-cell rows for easy access
-                # (match each by nearest centers, like for A)
                 def find_row_by_center(target_rc):
                     j = ((df["YC"] - target_rc[0]).abs()
                          + (df["XC"] - target_rc[1]).abs()).argmin()
@@ -136,12 +115,9 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 rowB = find_row_by_center(cellB_center)
                 rowC = find_row_by_center(cellC_center)
 
-                # which tiles should each cell occupy?
                 tA = to_tile_indices(cellA_center, tile_size)
                 tB = to_tile_indices(cellB_center, tile_size)
                 tC = to_tile_indices(cellC_center, tile_size)
-
-                # fetch the corresponding tile rows from avg_df
                 def tile_row(ix, iy):
                     hit = avg_df[(avg_df["tile_x"] == ix) & (avg_df["tile_y"] == iy)]
                     self.assertEqual(len(hit), 1, f"Tile ({ix},{iy}) not found or duplicated.")
@@ -151,14 +127,11 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 trB = tile_row(*tB)
                 trC = tile_row(*tC)
 
-                # exactly one arrow per occupied tile
                 self.assertEqual(int(trA["count"]), 1, "Tile A count should be 1.")
                 self.assertEqual(int(trB["count"]), 1, "Tile B count should be 1.")
                 self.assertEqual(int(trC["count"]), 1, "Tile C count should be 1.")
 
                 if include_target:
-                    # relative mode: avg_df stores angle (u) and avg_length (v) differently.
-                    # Check avg_length ~= per-cell length for each single-arrow tile.
                     self.assertAlmostEqual(trA["avg_length"], rowA["Length cell vector"], delta=5,
                                            msg="Tile A avg_length mismatch (relative mode).")
                     self.assertAlmostEqual(trB["avg_length"], rowB["Length cell vector"], delta=5,
@@ -167,7 +140,6 @@ class TestCellExtensionOrientation(unittest.TestCase):
                                            msg="Tile C avg_length mismatch (relative mode).")
                     self.assertEqual(trA["color_mode"], "relative")
                 else:
-                    # absolute mode: u = mean(DX), v = mean(DY) for the tile
                     self.assertAlmostEqual(trA["u"], rowA["DX"], delta=3, msg="Tile A u!=DX")
                     self.assertAlmostEqual(trA["v"], rowA["DY"], delta=3, msg="Tile A v!=DY")
                     self.assertAlmostEqual(trB["u"], rowB["DX"], delta=3, msg="Tile B u!=DX")

@@ -10,6 +10,9 @@ from skimage.draw import disk, line
 from directionality_quantification.main import run
 from directionality_quantification.process import angle_between
 
+TEST_DIR = Path(__file__).parent
+PROJECT_ROOT = TEST_DIR.parent
+
 
 def _write_inputs(base_dir: Path, raw_image, labels_image, target_mask):
     raw_path = base_dir / "input_raw.tif"
@@ -18,31 +21,28 @@ def _write_inputs(base_dir: Path, raw_image, labels_image, target_mask):
 
     tifffile.imwrite(raw_path, raw_image.astype(np.uint8))
     tifffile.imwrite(labels_path, labels_image.astype(np.uint16))
-    tifffile.imwrite(target_path, target_mask.astype(np.uint8))  # save even if unused
+    tifffile.imwrite(target_path, target_mask.astype(np.uint8))
 
     return raw_path, labels_path, target_path
 
 
 class TestCellExtensionOrientation(unittest.TestCase):
     def setUp(self):
-        # Ensure output directory exists
-        self.output_dir = Path("sample/result")
+        self.output_dir = TEST_DIR / "sample" / "result"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def test_example_run(self):
-        # Run the command from the README example
         sys.argv = ["directionality-quantification",
-            "--input_raw", "../sample/input_raw.tif",
-            "--input_labeling", "../sample/input_labels.tif",
-            "--input_target", "../sample/input_target.tif",
+            "--input_raw", str(PROJECT_ROOT / "sample" / "input_raw.tif"),
+            "--input_labeling", str(PROJECT_ROOT / "sample" / "input_labels.tif"),
+            "--input_target", str(PROJECT_ROOT / "sample" / "input_target.tif"),
             "--output", str(self.output_dir),
             "--pixel_in_micron", "0.65",
             "--output_res", "10:7"]
 
         run()
 
-        # Verify the output folder has content (example: expected result files)
-        output_files = list(self.output_dir.glob("*.png"))  # Modify if files are not PNGs
+        output_files = list(self.output_dir.glob("*.png"))
         self.assertGreater(len(output_files), 0, "Output directory should contain result images.")
 
     def _make_inputs_uniform(self):
@@ -108,11 +108,9 @@ class TestCellExtensionOrientation(unittest.TestCase):
         max_extension = 160
         margin = circle_radius + max_extension
 
-        # Helper to map uniform [0,1] -> quadratic [0,1] (denser left, sparser right)
         def quad_map(u: float) -> float:
             return u * u
 
-        # Precompute x positions with increasing spacing (quadratic)
         x_positions = []
         for j in range(n_cols):
             if n_cols == 1:
@@ -123,7 +121,6 @@ class TestCellExtensionOrientation(unittest.TestCase):
             x = int(margin + t * (width - 2 * margin))
             x_positions.append(x)
 
-        # y positions can stay uniform
         y_positions = []
         for i in range(n_rows):
             if n_rows == 1:
@@ -133,9 +130,8 @@ class TestCellExtensionOrientation(unittest.TestCase):
             y = int(margin + v * (height - 2 * margin))
             y_positions.append(y)
 
-        # Extension length grows with row index (y)
         min_len = 20
-        max_len = 140  # bounded by max_extension above
+        max_len = 140
         center_x, center_y = width // 2, height // 2
 
         label_count = 1
@@ -152,7 +148,6 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 angle = (cell_index / total_cells) * 4 * math.pi
                 extension_dir = np.array([math.cos(angle), math.sin(angle)])
 
-                # strictly increase with y
                 v = 0.0 if n_rows == 1 else i / (n_rows - 1)
                 extension_length = min_len + v * (max_len - min_len)
 
@@ -197,33 +192,26 @@ class TestCellExtensionOrientation(unittest.TestCase):
                 cx = int(margin + j * x_space)
                 cy = int(margin + i * y_space)
 
-                # Draw cell body
                 rr, cc = disk((cy, cx), circle_radius, shape=labels_image.shape)
                 labels_image[rr, cc] = label_count
 
-                # Determine number of extensions based on row (y)
                 v_norm = i / (n_rows - 1) if n_rows > 1 else 0
-                num_extensions = 1 + int(round(3 * v_norm))  # Gives 1, 2, 3, or 4
+                num_extensions = 1 + int(round(3 * v_norm))
 
-                # Determine spread of extensions based on col (x)
                 u_norm = j / (n_cols - 1) if n_cols > 1 else 0
-                max_spread_angle = math.pi  # Spread over a half circle
+                max_spread_angle = math.pi
                 spread_angle = u_norm * max_spread_angle
 
-                # Base direction: point towards the center of the image
                 vec_to_center = np.array([center_x - cx, center_y - cy])
-                # Handle the case where the cell is at the center
                 if np.linalg.norm(vec_to_center) < 1e-6:
                     base_angle = 0
                 else:
                     base_angle = np.arctan2(vec_to_center[1], vec_to_center[0])
 
-                # Draw extensions
                 for m in range(num_extensions):
                     if num_extensions == 1:
                         offset = 0
                     else:
-                        # Spread angles evenly from -spread/2 to +spread/2
                         offset = (m / (num_extensions - 1) - 0.5) * spread_angle
 
                     angle = base_angle + offset
@@ -235,13 +223,10 @@ class TestCellExtensionOrientation(unittest.TestCase):
                     end_y = start_y + int(extension_length * extension_dir[1])
 
                     rr_line, cc_line = line(start_y, start_x, end_y, end_x)
-                    # Ensure line is within bounds for safety
                     valid_indices = (rr_line >= 0) & (rr_line < height) & (cc_line >= 0) & (cc_line < width)
                     labels_image[rr_line[valid_indices], cc_line[valid_indices]] = label_count
 
                 label_count += 1
-
-        # Define a central target mask
         target_mask = np.zeros((height, width), dtype=bool)
         rr_t, cc_t = disk((center_y, center_x), 100, shape=target_mask.shape)
         target_mask[rr_t, cc_t] = True
@@ -251,7 +236,7 @@ class TestCellExtensionOrientation(unittest.TestCase):
     def _run_case(self, raw_image, labels_image, target_mask, output_name):
         for include_target in (False, True):
             with self.subTest(include_target=include_target):
-                temp_dir = Path(output_name + ("_with_target" if include_target else "_without_target"))
+                temp_dir = TEST_DIR / (output_name + ("_with_target" if include_target else "_without_target"))
                 output_dir = temp_dir / "output"
                 output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -301,18 +286,60 @@ class TestCellExtensionOrientation(unittest.TestCase):
         self._run_case(raw_image, labels_image, target_mask, "generated_multi_extension")
 
     def test_angle_between(self):
-        print(angle_between((1, 0), (0, 1)))
-        print(angle_between((1, 0), (0, -1)))
-        print(angle_between((1, 0), (1, 0)))
-        print(angle_between((1, 0), (-1, 0)))
+        """Test angle_between function with various vector pairs."""
+        import math
+        
+        angle1 = angle_between((1, 0), (0, 1))
+        self.assertAlmostEqual(angle1, -math.pi / 2, delta=0.1, msg="Perpendicular vectors (1,0)->(0,1) should give -π/2 radians")
+        
+        angle2 = angle_between((1, 0), (0, -1))
+        self.assertAlmostEqual(angle2, math.pi / 2, delta=0.1, msg="Perpendicular vectors (1,0)->(0,-1) should give π/2 radians")
+        
+        angle3 = angle_between((1, 0), (1, 0))
+        self.assertAlmostEqual(angle3, 0.0, delta=0.1, msg="Parallel vectors should give 0 radians")
+        
+        angle4 = angle_between((1, 0), (-1, 0))
+        self.assertAlmostEqual(angle4, -math.pi, delta=0.1, msg="Opposite vectors should give -π radians")
+
+    def test_fullres_rectangles_with_alpha(self):
+        """Test that full-resolution rectangles are drawn with alpha blending."""
+        from directionality_quantification.plot import save_fullres_with_rectangles
+        from directionality_quantification.process import compute_and_write_avg_dir_tables
+        from pandas import DataFrame
+        import tempfile
+        
+        raw_image = np.full((100, 100), 128, dtype=np.uint8)
+        roi_fullres = [0, 100, 0, 100]
+        
+        cell_table = DataFrame({
+            'YC': [50],
+            'XC': [50],
+            'DY': [10],
+            'DX': [10],
+            'Relative angle': [45],
+            'Absolute angle': [45]
+        })
+        
+        avg_tables = compute_and_write_avg_dir_tables(
+            cell_table, raw_image, roi_fullres, None, "100", None
+        )
+        
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output = Path(tmpdir)
+            
+            try:
+                save_fullres_with_rectangles(
+                    output, raw_image, avg_tables, roi_fullres, None, "100"
+                )
+                png_files = list(output.glob("fullres_with_rectangles_tile*.png"))
+                self.assertGreater(len(png_files), 0, "Should create PNG files")
+            except TypeError as e:
+                if "can't multiply sequence" in str(e):
+                    self.fail(f"Alpha blending failed: {e}")
+                raise
 
     def tearDown(self):
         pass
-        # uncomment the following code to clean up the output
-        # # Clean up output directory after test
-        # for file in self.output_dir.glob("*"):
-        #     file.unlink()
-        # self.output_dir.rmdir()
 
 if __name__ == "__main__":
     unittest.main()

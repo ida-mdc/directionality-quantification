@@ -1,5 +1,6 @@
 import math
 import unittest
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +11,8 @@ from skimage.morphology import skeletonize
 
 from directionality_quantification.process import region_extension_analysis, \
     angle_between
+
+TEST_DIR = Path(__file__).parent
 
 
 def _make_single_cell(angles_rad):
@@ -58,19 +61,16 @@ class TestCellExtensionOrientation(unittest.TestCase):
         for i, case in enumerate(test_cases):
             print(f"\n--- RUNNING CASE: {case['name']} ---")
 
-            # 1. Generate Data
             angles_rad = [np.deg2rad(a) for a in case['angles_deg']]
             labels_image, expected_direction, expected_magnitude = _make_single_cell(angles_rad)
 
             regions = regionprops(labels_image, intensity_image=(labels_image > 0))
             region = regions[0]
 
-            # 2. Run Analysis
             (skeleton, center_translated, maxradius,
              length_cell_vector, absolute_angle, relative_angle,
              rolling_ball_angle, orientation_vector, condition_outside) = region_extension_analysis(region, image_target=None)
 
-            # 4. Visualization
             binary_image = region.intensity_image
             dist_map = ndimage.distance_transform_edt(binary_image)
             center = np.unravel_index(np.argmax(dist_map), dist_map.shape)
@@ -80,7 +80,6 @@ class TestCellExtensionOrientation(unittest.TestCase):
             ax_row = axes[i]
             ax_row[0].set_ylabel(case['name'], fontsize=16, fontweight='bold')
 
-            # Plotting logic for panels 1-3
             ax_row[0].imshow(binary_image, cmap='gray', origin='lower')
             ax_row[1].imshow(dist_map, cmap='viridis', origin='lower')
             ax_row[1].plot(center[1], center[0], 'r+', ms=10)
@@ -102,8 +101,9 @@ class TestCellExtensionOrientation(unittest.TestCase):
             axes[0, j].set_title(title, fontsize=14)
 
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        print("\nSaving summary plot to 'visual_test_summary.png'...")
-        plt.savefig('visual_test_summary.png', dpi=200)
+        output_path = TEST_DIR / 'visual_test_summary.png'
+        print(f"\nSaving summary plot to '{output_path}'...")
+        plt.savefig(output_path, dpi=200)
 
 
 if __name__ == "__main__":

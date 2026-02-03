@@ -1,5 +1,6 @@
 import math
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -10,9 +11,24 @@ from skimage.morphology import skeletonize
 from tqdm import tqdm
 
 from directionality_quantification.plot import ABS_CMAP, ABS_NORM, REL_CMAP, REL_NORM
+from directionality_quantification.color_strategy import ColorStrategy, get_color_strategy
+from directionality_quantification.report import extract_cell_thumbnail
 
 
-def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
+def analyze_segments(regions, image_target, pixel_in_micron, raw_image: Optional[np.ndarray] = None, extract_thumbnails: bool = False) -> DataFrame:
+    """
+    Analyze segmented regions and extract cell properties.
+    
+    Args:
+        regions: List of RegionProps objects
+        image_target: Target distance map image
+        pixel_in_micron: Pixel size in microns
+        raw_image: Raw image array for thumbnail extraction
+        extract_thumbnails: Whether to extract and encode thumbnails
+    
+    Returns:
+        DataFrame with cell analysis results
+    """
     rows = []
 
     for index, region in enumerate(tqdm(regions, desc="Processing Regions")):
@@ -35,18 +51,13 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
         if pixel_in_micron:
             row["MScore"] = circularity * ((row["Area in um²"] - 27) / 27)
 
-        # angles from region_extension_analysis(...)
-        skeleton, center, radius, L, abs_rad, rel_raw, rolling_ball_angle, orientation_vector, condition_outside = region_extension_analysis(region, image_target)
+        skeleton, center, radius, L, abs_rad, rel_raw, rolling_ball_angle, orientation_vector, condition_outside, distance_to_target = region_extension_analysis(region, image_target)
 
-        # --- normalize for math (canonical) ---
         rel_rad = np.abs(rel_raw) % (2 * np.pi)
 
-        # --- normalize for display/color (standard 0 at +X) ---
         abs_deg = (np.degrees(abs_rad) + 360) % 360
         rel_deg = (np.degrees(rel_rad) + 360) % 360
         rolling_ball_deg = (np.degrees(rolling_ball_angle) + 360) % 360
-
-        # vectors for downstream math, from canonical abs_rad
         dx = L * np.sin(abs_rad)
         dy = L * np.cos(abs_rad)
 
@@ -54,6 +65,11 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
         row["YC"] = center[0]
         row["Radius biggest circle"] = radius
         row["Length cell vector"] = L
+        # Convert length to micrometers if available
+        if pixel_in_micron and L is not None:
+            row["Length cell vector (um)"] = L * pixel_in_micron
+        else:
+            row["Length cell vector (um)"] = None
         row["Rolling ball angle"] = rolling_ball_deg
 
         row["Absolute angle"] = abs_deg
@@ -61,13 +77,20 @@ def analyze_segments(regions, image_target, pixel_in_micron) -> DataFrame:
 
         row["DX"] = dx
         row["DY"] = dy
+        
+        row["Distance to target"] = distance_to_target
+        if pixel_in_micron and distance_to_target is not None:
+            row["Distance to target (um)"] = distance_to_target * pixel_in_micron
+        else:
+            row["Distance to target (um)"] = None
 
-        # row["Relative angle color"] = REL_CMAP(REL_NORM(rel_deg))
-        # row["Absolute angle color"] = ABS_CMAP(ABS_NORM(abs_deg))
+        if extract_thumbnails and raw_image is not None:
+            thumbnail = extract_cell_thumbnail(raw_image, region)
+            row["thumbnail"] = thumbnail
+        elif extract_thumbnails:
+            row["thumbnail"] = None
 
         rows.append(row)
-
-    # Convert list of dicts to DataFrame
     cell_table = pd.DataFrame(rows)
     return cell_table
 
@@ -83,7 +106,6 @@ def calculate_average_extension_vector(skeleton_points, root):
     if num_points == 0:
         return np.array([0.0, 0.0])
 
-    # --- Part 1: Find Average Direction and Coherence ---
     points_centered = points - root
     norms = np.linalg.norm(points_centered, axis=1)
     non_zero_norms = norms > 1e-6
@@ -94,11 +116,8 @@ def calculate_average_extension_vector(skeleton_points, root):
     coherence_score = np.linalg.norm(coherence_vector)
     average_direction = coherence_vector / coherence_score if coherence_score > 1e-6 else np.array([0., 0.])
 
-    # --- Part 2: Find Maximum Extension Length ---
-    # We use the norms we already calculated.
     max_extension_length = np.max(norms)
 
-    # --- Part 3: Combine Them ---
     final_vector_length = max_extension_length * coherence_score
     final_vector = average_direction * final_vector_length
 
@@ -122,6 +141,7 @@ def region_extension_analysis(region, image_target):
     # pixel_locations_relevant_to_direction = pixel_locations_relevant_to_direction - center
     center_translated = [center[0] + miny, center[1] + minx]
     target_vector = [0, 0]
+    distance_to_target = None
     if image_target is not None:
         neighbor_y = [center_translated[0] + 1, center_translated[1]]
         neighbor_x = [center_translated[0], center_translated[1] + 1]
@@ -130,27 +150,44 @@ def region_extension_analysis(region, image_target):
             value_at_neighbor_x = image_target[neighbor_x[0], neighbor_x[1]]
             value_at_neighbor_y = image_target[neighbor_y[0], neighbor_y[1]]
             target_vector = [value_at_center - value_at_neighbor_y, value_at_center - value_at_neighbor_x]
+            distance_to_target = float(value_at_center)
     length_cell_vector = 0
     absolute_angle = 0
     rolling_ball_angle = 0
     relative_angle = 0
     if length > maxradius:
-        # mean_outside = np.mean(pixel_locations_relevant_to_direction, axis=0)
         length_cell_vector = length
         absolute_angle = angle_between((-1, 0), orientation_vector)
         rolling_ball_angle = angle_between((-1, 0), target_vector)
         relative_angle = angle_between(orientation_vector, target_vector)
-    return skeleton, center_translated, maxradius, length_cell_vector, absolute_angle, relative_angle, rolling_ball_angle, orientation_vector, condition_outside
+    return skeleton, center_translated, maxradius, length_cell_vector, absolute_angle, relative_angle, rolling_ball_angle, orientation_vector, condition_outside, distance_to_target
 
 
-def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask):
+def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask, color_strategy: Optional[ColorStrategy] = None):
+    """
+    Build average directions table with configurable color strategy.
+    
+    Args:
+        cell_table: DataFrame with cell data
+        shape: Shape of the image
+        crop_extend: Crop/extend coordinates [y_min, y_max, x_min, x_max]
+        tile_size: Size of tiles in pixels
+        image_target_mask: Target mask image (None for absolute mode)
+        color_strategy: ColorStrategy instance. If None, uses "count_alpha_saturation" strategy.
+    
+    Returns:
+        DataFrame with tile data including colors and alpha values
+    """
+    if color_strategy is None:
+        color_strategy = get_color_strategy("count_alpha_saturation")
+    
     tiles_num_y = int(shape[0] / tile_size) + 1
     tiles_num_x = int(shape[1] / tile_size) + 1
 
     ix = ((cell_table["XC"] - crop_extend[2]) // tile_size).astype(int)
     iy = ((cell_table["YC"] - crop_extend[0]) // tile_size).astype(int)
 
-    rows, counts_all, avg_lengths_all = [], [], []
+    rows = []
     is_relative = image_target_mask is not None
 
     for tile_x, tile_y in np.ndindex(tiles_num_x, tiles_num_y):
@@ -167,23 +204,20 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
                 "u": 0.0, "v": 0.0, "count": 0, "avg_length": 0.0,
                 "tile_size": tile_size, "color_mode": "relative" if is_relative else "absolute",
                 "color_scalar_deg": 0.0, "color_hex": to_hex((0, 0, 0)),
-                # alpha filled later
+                # alpha filled later by color strategy
             }
             rows.append(row)
-            counts_all.append(0.0)
-            avg_lengths_all.append(0.0)
             continue
 
         if is_relative:
-            # length-weighted mean relative angle (in radians)
             rel_rad = np.radians(cell_table.loc[idx, "Relative angle"])
             L = cell_table.loc[idx, "Length cell vector"]
             wsum = np.nansum(L)
-            rel_tile = (np.nansum(rel_rad * L) / wsum) if wsum > 0 else 0.0  # [0, π]
+            rel_tile = (np.nansum(rel_rad * L) / wsum) if wsum > 0 else 0.0
             u = rel_tile
             v = float(np.nanmean(L))
             avg_length = v
-            color_scalar_deg = float(np.degrees(rel_tile))  # 0..180
+            color_scalar_deg = float(np.degrees(rel_tile))
             color_hex = to_hex(REL_CMAP(REL_NORM(color_scalar_deg)))
         else:
             dx_bar = float(np.nanmean(cell_table.loc[idx, "DX"]))
@@ -199,29 +233,14 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
             "u": u, "v": v, "count": count, "avg_length": avg_length,
             "tile_size": tile_size, "color_mode": "relative" if is_relative else "absolute",
             "color_scalar_deg": color_scalar_deg, "color_hex": color_hex,
-            # alpha filled later
         }
         rows.append(row)
-        counts_all.append(float(count))
-        avg_lengths_all.append(float(avg_length))
 
-    counts_all = np.asarray(counts_all, dtype=float)
-    avg_lengths_all = np.asarray(avg_lengths_all, dtype=float)
-    counts_all = counts_all[counts_all > 0]
-    avg_lengths_all = avg_lengths_all[avg_lengths_all > 0]
-
-    max_count = float(np.nanpercentile(counts_all, 90))
-    max_length = float(np.nanpercentile(avg_lengths_all, 90))
-
-    # print(max_count, max_length)
-
+    color_strategy.compute_color_and_alpha(rows, is_relative, tile_size)
+    alpha_desc_low, alpha_desc_high = color_strategy.get_alpha_description()
     for r in rows:
-        c = r["count"]
-        L = r["avg_length"]
-        alpha = min(1.0, c / max_count) * min(1.0, L / max_length) * 0.9 if (max_count > 0 and max_length > 0) else 0.0
-        r["alpha"] = alpha
-        r["max_count"] = float(max_count)
-        r["max_length"] = float(max_length)
+        r["alpha_description_low"] = alpha_desc_low
+        r["alpha_description_high"] = alpha_desc_high
 
     return pd.DataFrame(rows)
 
@@ -248,7 +267,7 @@ def write_table(cell_table_content: DataFrame, output):
             cell_table_content.to_csv(output.joinpath("cells.csv"))
 
 
-def compute_and_write_avg_dir_tables(cell_table: DataFrame, raw_image, roi, image_target_mask, tiles, output):
+def compute_and_write_avg_dir_tables(cell_table: DataFrame, raw_image, roi, image_target_mask, tiles, output, color_strategy: Optional[ColorStrategy] = None):
 
     dfs = []
 
@@ -264,15 +283,17 @@ def compute_and_write_avg_dir_tables(cell_table: DataFrame, raw_image, roi, imag
             shape=raw_image.shape,
             crop_extend=roi,
             tile_size=tile_size,
-            image_target_mask=image_target_mask
+            image_target_mask=image_target_mask,
+            color_strategy=color_strategy
         )
 
         dfs.append(avg_df)
 
         if output:
             avg_csv = output.joinpath(f'average_directions_tile{tile_size}.csv')
-            avg_df.to_csv(avg_csv, index=False)
-            print(f"Saved average directions table: {Path(avg_csv).absolute()}")
+            avg_df_with_cells = avg_df[avg_df["count"] > 0]
+            avg_df_with_cells.to_csv(avg_csv, index=False)
+            print(f"Saved average directions table: {Path(avg_csv).absolute()} ({len(avg_df_with_cells)} tiles with cells)")
 
 
     if output:

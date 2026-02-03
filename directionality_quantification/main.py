@@ -7,6 +7,7 @@ from skimage.measure import label, regionprops
 
 from directionality_quantification.plot import plot
 from directionality_quantification.process import analyze_segments, write_table, compute_and_write_avg_dir_tables
+from directionality_quantification.color_strategy import get_color_strategy, STRATEGIES
 
 
 def run():
@@ -35,6 +36,11 @@ def run():
                         help="Table of cells to analyze, with first column as label IDs.")
     parser.add_argument('--input_labeling', type=str, required=True,
                         help="Label map for segmentation analysis (2D, 1 channel).")
+    parser.add_argument('--color_strategy', type=str, default="count_alpha_saturation",
+                        choices=list(STRATEGIES.keys()),
+                        help=f"Color strategy for rectangles. Available: {', '.join(STRATEGIES.keys())}")
+    parser.add_argument('--fullres', action='store_true',
+                        help="Generate full-resolution output images (requires more RAM)")
 
     # Parse arguments
     args = parser.parse_args()
@@ -62,13 +68,18 @@ def run():
     output_res = [W, H]
 
     regions = get_regions(image, args.min_size, args.max_size)
-    cell_table_content  = analyze_segments(regions, image_target_distances, pixel_in_micron)
+    cell_table_content  = analyze_segments(regions, image_target_distances, pixel_in_micron, 
+                                           raw_image=image_raw, extract_thumbnails=True)
     write_table(cell_table_content, args.output)
 
-    avg_tables = compute_and_write_avg_dir_tables(cell_table_content, image_raw, roi, image_target_mask, args.tiles, args.output)
+    # Get color strategy
+    color_strategy = get_color_strategy(args.color_strategy)
+    print(f"Using color strategy: {args.color_strategy}")
+
+    avg_tables = compute_and_write_avg_dir_tables(cell_table_content, image_raw, roi, image_target_mask, args.tiles, args.output, color_strategy)
 
     plot(cell_table_content, image_raw, roi, additional_rois, image_target_mask, pixel_in_micron, args.tiles,
-         args.output, output_res, avg_tables)
+         args.output, output_res, avg_tables, generate_fullres=args.fullres)
 
 
 

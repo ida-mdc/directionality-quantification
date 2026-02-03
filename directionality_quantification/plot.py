@@ -13,6 +13,7 @@ from matplotlib.pyplot import get_cmap
 from matplotlib_scalebar.scalebar import ScaleBar
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from pandas import DataFrame
+from skimage.draw import rectangle
 from skimage.transform import rescale
 from tqdm import tqdm
 
@@ -22,6 +23,159 @@ REL_NORM  = Normalize(0, 180)
 ABS_NORM  = Normalize(0, 360)
 REL_CMAP = get_cmap("coolwarm_r")
 ABS_CMAP = get_cmap("hsv")
+
+
+def save_fullres_with_rectangles(output, raw_image_fullres, avg_tables_fullres, roi_fullres, image_target_mask_fullres, tiles):
+    """Save full-resolution image with tile rectangles drawn on top."""
+    if raw_image_fullres.size == 0 or raw_image_fullres.shape[0] <= 0 or raw_image_fullres.shape[1] <= 0:
+        print("Warning: Invalid input image dimensions, skipping full-resolution rectangle save")
+        return
+    
+    v_min = raw_image_fullres.min()
+    v_max = raw_image_fullres.max()
+    if (v_max - v_min) == 0:
+        normalized_image = np.zeros_like(raw_image_fullres, dtype=float)
+    else:
+        normalized_image = (raw_image_fullres.astype(np.float32) - v_min) / (v_max - v_min)
+    
+    if image_target_mask_fullres is not None:
+        bg_image_to_display = apply_hatch_to_background(normalized_image, image_target_mask_fullres)
+        del normalized_image
+    else:
+        bg_image_to_display = normalized_image
+    
+    if len(bg_image_to_display.shape) == 2:
+        rgb_image = np.stack([bg_image_to_display] * 3, axis=-1)
+    elif len(bg_image_to_display.shape) == 3 and bg_image_to_display.shape[2] == 1:
+        rgb_image = np.repeat(bg_image_to_display, 3, axis=2)
+    elif len(bg_image_to_display.shape) == 3 and bg_image_to_display.shape[2] == 3:
+        rgb_image = bg_image_to_display
+    else:
+        rgb_image = bg_image_to_display[:, :, :3]
+    
+    if bg_image_to_display is not rgb_image:
+        del bg_image_to_display
+    tile_list = tiles.split(',')
+    for idx, tile_str in enumerate(tile_list):
+        tile_size = int(tile_str)
+        avg_df = avg_tables_fullres[idx]
+        
+        tiles_with_cells = avg_df[avg_df["count"] > 0]
+        
+        if len(tiles_with_cells) > 0:
+            image_with_rects = rgb_image.copy()
+        else:
+            image_with_rects = rgb_image
+        for _, row in tqdm(tiles_with_cells.iterrows(), total=len(tiles_with_cells), desc=f"Drawing rectangles (tile {tile_size})"):
+            x = int(row["x"])
+            y = int(row["y"])
+            tile_size_actual = int(row["tile_size"])
+            
+            rgba_color = to_rgba(row["color_hex"], row["alpha"])
+            rgb_color = np.array(rgba_color[:3])
+            alpha = rgba_color[3]
+            
+            y_min = max(0, y)
+            y_max = min(image_with_rects.shape[0], y + tile_size_actual)
+            x_min = max(0, x)
+            x_max = min(image_with_rects.shape[1], x + tile_size_actual)
+            
+            if y_max > y_min and x_max > x_min:
+                image_with_rects[y_min:y_max, x_min:x_max] = (
+                    image_with_rects[y_min:y_max, x_min:x_max] * (1 - alpha) + 
+                    rgb_color * alpha
+                )
+        
+        output_path = output / f"fullres_with_rectangles_tile{tile_size}.png"
+        image_with_rects = np.clip(image_with_rects, 0.0, 1.0)
+        image_uint8 = (image_with_rects * 255).astype(np.uint8)
+        if image_uint8.shape[0] <= 0 or image_uint8.shape[1] <= 0:
+            print(f"Warning: Invalid image dimensions {image_uint8.shape}, skipping save")
+            continue
+        print(f"Saving PNG with shape {image_uint8.shape}, dtype {image_uint8.dtype}, size {image_uint8.nbytes / 1024 / 1024:.2f} MB")
+        try:
+            plt.imsave(output_path, image_uint8)
+            print(f"Saved full-resolution image with rectangles to {output_path}")
+        except Exception as e:
+            print(f"Error saving PNG: {e}")
+            print(f"Image shape: {image_uint8.shape}, dtype: {image_uint8.dtype}")
+            raise
+
+
+def save_fullres_with_arrows(output, raw_image_fullres, cell_table_fullres, roi_fullres, image_target_mask_fullres):
+    """Save full-resolution image with arrows drawn on top."""
+    # Validate input image
+    if raw_image_fullres.size == 0 or raw_image_fullres.shape[0] <= 0 or raw_image_fullres.shape[1] <= 0:
+        print("Warning: Invalid input image dimensions, skipping full-resolution arrow save")
+        return
+    
+    v_min = raw_image_fullres.min()
+    v_max = raw_image_fullres.max()
+    if (v_max - v_min) == 0:
+        normalized_image = np.zeros_like(raw_image_fullres, dtype=np.float32)
+    else:
+        normalized_image = (raw_image_fullres.astype(np.float32) - v_min) / (v_max - v_min)
+    
+    if image_target_mask_fullres is not None:
+        bg_image_to_display = apply_hatch_to_background(normalized_image, image_target_mask_fullres)
+        del normalized_image
+    else:
+        bg_image_to_display = normalized_image
+    if len(bg_image_to_display.shape) == 2:
+        rgb_image = np.stack([bg_image_to_display] * 3, axis=-1)
+    elif bg_image_to_display.shape[2] == 1:
+        rgb_image = np.repeat(bg_image_to_display, 3, axis=2)
+    elif bg_image_to_display.shape[2] == 3:
+        rgb_image = bg_image_to_display
+    else:
+        rgb_image = bg_image_to_display[:, :, :3]
+    
+    if bg_image_to_display is not rgb_image:
+        del bg_image_to_display
+    
+    overlay = np.zeros((rgb_image.shape[0], rgb_image.shape[1], 4), dtype=np.float32)
+    
+    reference_dimension = 1000.0
+    image_dimension = max(overlay.shape)
+    scale_factor = np.sqrt(image_dimension / reference_dimension)
+    
+    is_relative = image_target_mask_fullres is not None
+    angles = cell_table_fullres["Relative angle"] if is_relative else cell_table_fullres["Absolute angle"]
+    colors = (REL_CMAP(REL_NORM(angles.to_numpy())) if is_relative
+              else ABS_CMAP(ABS_NORM(angles.to_numpy())))
+    
+    y_min, y_max, x_min, x_max = roi_fullres
+    
+    for row, color in tqdm(zip(cell_table_fullres.itertuples(index=False), colors),
+                           total=len(cell_table_fullres), desc="Drawing arrows"):
+        r0 = float(row.YC) - y_min
+        c0 = float(row.XC) - x_min
+        r1 = r0 - float(row.DY)
+        c1 = c0 + float(row.DX)
+        
+        if not (0 <= r0 < overlay.shape[0] and 0 <= c0 < overlay.shape[1]):
+            continue
+        
+        _draw_scaled_arrow_aa(overlay, r0, c0, r1, c1, color, scale_factor=scale_factor, opacity=0.8)
+    
+    alpha = overlay[:, :, 3:4]
+    rgb_overlay = overlay[:, :, :3]
+    rgb_image = rgb_image * (1 - alpha) + rgb_overlay * alpha
+    
+    output_path = output / "fullres_with_arrows.png"
+    rgb_image = np.clip(rgb_image, 0.0, 1.0)
+    image_uint8 = (rgb_image * 255).astype(np.uint8)
+    if image_uint8.shape[0] <= 0 or image_uint8.shape[1] <= 0:
+        print(f"Warning: Invalid image dimensions {image_uint8.shape}, skipping save")
+        return
+    print(f"Saving PNG with shape {image_uint8.shape}, dtype {image_uint8.dtype}, size {image_uint8.nbytes / 1024 / 1024:.2f} MB")
+    try:
+        plt.imsave(output_path, image_uint8)
+        print(f"Saved full-resolution image with arrows to {output_path}")
+    except Exception as e:
+        print(f"Error saving PNG: {e}")
+        print(f"Image shape: {image_uint8.shape}, dtype: {image_uint8.dtype}")
+        raise
 
 
 def generate_target_contour(ax, image_target_mask, roi): # Added 'ax'
@@ -64,11 +218,9 @@ def plot_all_directions(output, output_res, cell_table, bg_image_display,
 
     overlay = np.zeros((bg_image_display.shape[0], bg_image_display.shape[1], 4), dtype=np.float32)
 
-    # We base the scale on a reference dimension, e.g., 1000 pixels.
-    # An arrow on a 2000px image will be twice as big as on a 1000px image.
     reference_dimension = 1000.0
     image_dimension = max(overlay.shape)
-    scale_factor = image_dimension / reference_dimension
+    scale_factor = np.sqrt(image_dimension / reference_dimension)
 
     is_relative = image_target_mask is not None
     angles = cell_table["Relative angle"] if is_relative else cell_table["Absolute angle"]
@@ -76,6 +228,7 @@ def plot_all_directions(output, output_res, cell_table, bg_image_display,
               else ABS_CMAP(ABS_NORM(angles.to_numpy())))
 
     y_min, y_max, x_min, x_max = roi
+    y_min_disp, y_max_disp, x_min_disp, x_max_disp = roi_display
 
     for row, color in tqdm(zip(cell_table.itertuples(index=False), colors),
                            total=len(cell_table), desc="Drawing vectors"):
@@ -87,7 +240,7 @@ def plot_all_directions(output, output_res, cell_table, bg_image_display,
         if not (0 <= r0 < overlay.shape[0] and 0 <= c0 < overlay.shape[1]):
             continue
 
-        _draw_scaled_arrow_aa(overlay, r0, c0, r1, c1, color, scale_factor=scale_factor)
+        _draw_scaled_arrow_aa(overlay, r0, c0, r1, c1, color, scale_factor=scale_factor, opacity=0.8)
 
     ax.imshow(overlay, extent=[x_min_disp, x_max_disp, y_min_disp, y_max_disp], origin='upper', zorder=2)
 
@@ -106,7 +259,7 @@ def plot_all_directions(output, output_res, cell_table, bg_image_display,
         rois = [roi_display] + list(additional_rois_display)  # Use display ROIs
         region_colors = ['black'] + additional_roi_colors
         for i, region in enumerate(rois):
-            adjust_to_region(ax, roi_display[1] + roi_display[0],  # Use display height
+            adjust_to_region(ax, roi_display[1] + roi_display[0],
                              [region[2], region[3], region[0], region[1]], region_colors[i],
                              scalebar if pixel_in_micron_display else None)
             plt.tight_layout(pad=1)
@@ -118,7 +271,7 @@ def plot_all_directions(output, output_res, cell_table, bg_image_display,
     print("Done plotting all directions.")
 
 def plot(cell_table: DataFrame, raw_image, roi, additional_rois,
-         image_target_mask, pixel_in_micron, tiles, output, output_res, avg_tables):
+         image_target_mask, pixel_in_micron, tiles, output, output_res, avg_tables, generate_fullres: bool = False):
 
     if output:
         output = Path(output)
@@ -127,51 +280,48 @@ def plot(cell_table: DataFrame, raw_image, roi, additional_rois,
     roi_display = copy.copy(roi)
     additional_rois_display = copy.deepcopy(additional_rois)
     pixel_in_micron_display = pixel_in_micron
+    raw_image_fullres = None
+    cell_table_fullres = None
+    avg_tables_fullres = None
+    roi_fullres = None
+    image_target_mask_fullres = None
+    
+    if generate_fullres:
+        raw_image_fullres = raw_image.copy()
+        cell_table_fullres = cell_table.copy()
+        avg_tables_fullres = copy.deepcopy(avg_tables)
+        roi_fullres = copy.copy(roi)
+        image_target_mask_fullres = image_target_mask.copy() if image_target_mask is not None else None
 
-    # 1. Determine target pixel resolution from (inches, dpi)
     dpi = plt.rcParams['figure.dpi']
     target_pixels_x = int(output_res[0] * dpi)
     target_pixels_y = int(output_res[1] * dpi)
     target_max_dim = max(target_pixels_x, target_pixels_y)
 
-    # 2. Determine data resolution
     data_max_dim = max(raw_image.shape)
 
-    # 3. Calculate scale factor
     scale_factor = target_max_dim / data_max_dim
 
     if scale_factor < 1.0:
         print(f"Data res {raw_image.shape} vs Target res ~({target_pixels_x}, {target_pixels_y}).")
         print(f"Applying downsampling factor: {scale_factor:.4f}")
 
-        # 4. Rescale IMAGES
-        # We rescale the raw_image. The normalization block below
-        # will then normalize this new, smaller image.
         raw_image = rescale(raw_image, scale_factor, anti_aliasing=True, preserve_range=True)
 
         if image_target_mask is not None:
             image_target_mask = rescale(image_target_mask, scale_factor, anti_aliasing=False, preserve_range=True)
-            image_target_mask = (image_target_mask > 0.5).astype(float)  # Re-threshold blurred mask
+            image_target_mask = (image_target_mask > 0.5).astype(float)
 
-        # 5. Rescale COORDINATES
         roi = [int(v * scale_factor) for v in roi]
         additional_rois = [[int(v * scale_factor) for v in r] for r in additional_rois]
         if pixel_in_micron:
-            pixel_in_micron = pixel_in_micron / scale_factor  # The size of one (new) pixel in microns
+            pixel_in_micron = pixel_in_micron / scale_factor
 
-        # 6. Rescale DATA TABLES
         cell_table = cell_table.copy()
         cols_to_scale = ['YC', 'XC', 'DY', 'DX']
         for col in cols_to_scale:
             if col in cell_table.columns:
                 cell_table[col] = cell_table[col] * scale_factor
-
-        avg_tables = copy.deepcopy(avg_tables)  # Use deep copy to be safe
-        cols_to_scale_avg = ['x', 'y', 'u', 'v']
-        for df in avg_tables:
-            for col in cols_to_scale_avg:
-                if col in df.columns:
-                    df[col] = df[col] * scale_factor
     else:
         print("Target resolution is >= data. No downsampling performed.")
 
@@ -206,7 +356,7 @@ def plot(cell_table: DataFrame, raw_image, roi, additional_rois,
         fig_avg, ax_avg, scalebar_avg = plot_average_directions(
             output_res=output_res, avg_df=avg_df,
             bg_image=bg_image_to_display,
-            roi=roi,  # This is the small, data-scaled ROI
+            roi=roi,
             image_target_mask=image_target_mask,
             pixel_in_micron=pixel_in_micron,
             roi_display=roi_display,
@@ -214,7 +364,7 @@ def plot(cell_table: DataFrame, raw_image, roi, additional_rois,
         )
 
         if output:
-            rois = [roi_display] + list(additional_rois_display)  # Use display ROIs
+            rois = [roi_display] + list(additional_rois_display)
             colors = ["black"] + list(roi_colors)
             for i, region in enumerate(rois):
                 adjust_to_region(ax_avg, roi_display[1] + roi_display[0],
@@ -228,8 +378,14 @@ def plot(cell_table: DataFrame, raw_image, roi, additional_rois,
         else:
             plt.show()
 
-    if output:
+    # Save full-resolution versions with overlays (only if requested)
+    if output and generate_fullres:
+        print("Saving full-resolution versions with overlays...")
+        save_fullres_with_rectangles(output, raw_image_fullres, avg_tables_fullres, roi_fullres, image_target_mask_fullres, tiles)
+        save_fullres_with_arrows(output, raw_image_fullres, cell_table_fullres, roi_fullres, image_target_mask_fullres)
         print(f"Results written to {output}")
+    elif output:
+        print(f"Results written to {output} (full-resolution output skipped, use --fullres to enable)")
 
 
 def plot_average_directions(output_res, avg_df, bg_image,
@@ -241,7 +397,6 @@ def plot_average_directions(output_res, avg_df, bg_image,
 
     fig, ax = plt.subplots(figsize=output_res, num=f"Average directions tile size {tile_size}")
 
-    # Create a divider for the axes
     divider = make_axes_locatable(ax)
 
     y_min_disp, y_max_disp, x_min_disp, x_max_disp = roi_display
@@ -252,11 +407,11 @@ def plot_average_directions(output_res, avg_df, bg_image,
         ax.imshow(bg_image, extent=[x_min_disp, x_max_disp, y_min_disp, y_max_disp], origin='upper', cmap="grey",
                   zorder=1)
 
-    ax.set_xlim(x_min_disp, x_max_disp)
-    ax.set_ylim(y_min_disp, y_max_disp)
-
     ax.set_aspect('equal', adjustable='box')  # make tiles square in data units
     ax.margins(0)
+    
+    ax.set_xlim(x_min_disp, x_max_disp)
+    ax.set_ylim(y_min_disp, y_max_disp)
 
     for s in ax.spines.values():
         s.set_visible(False)
@@ -289,8 +444,8 @@ def plot_target_legend(ax):
     ax.legend(
         handles=[hatch_legend_patch],
         loc='upper left',  # Or 'upper right', etc.
-        facecolor='black',  # <-- Sets legend background to black
-        labelcolor='white',  # <-- Sets legend text to white
+        facecolor='black',
+        labelcolor='white',
         framealpha=1.0  # Makes the black background opaque
     )
 
@@ -300,37 +455,38 @@ def plot_grid_from_table(avg_df, image_target_mask,
                          divider):
     ax = plt.gca()
 
-    tx = avg_df["tile_x"].astype(int).to_numpy()
-    ty = avg_df["tile_y"].astype(int).to_numpy()
-    min_tx, max_tx = tx.min(), tx.max()
-    min_ty, max_ty = ty.min(), ty.max()
-
-    nx = max_tx - min_tx  # True width of grid in tiles
-    ny = max_ty - min_ty  # True height of grid in tiles
-
-    tx_norm = tx - min_tx  # Normalized 0-based x-indices
-    ty_norm = ty - min_ty  # Normalized 0-based y-indices
-
-    rgba = np.zeros((ny, nx, 4), dtype=np.float32)
-    cols = np.array([to_rgba(c, a) for c, a in zip(avg_df["color_hex"], avg_df["alpha"])], dtype=np.float32)
-
-    keep = (tx_norm >= 0) & (tx_norm < nx) & (ty_norm >= 0) & (ty_norm < ny)
-    rgba[ty_norm[keep], tx_norm[keep], :] = cols[keep]
-
+    tile_size = int(avg_df["tile_size"].iloc[0])
+    
     y_min_disp, y_max_disp, x_min_disp, x_max_disp = roi_display
-
-    ax.imshow(
-        rgba,
-        extent=[x_min_disp, x_max_disp, y_min_disp, y_max_disp],
-        origin='upper',
-        interpolation='nearest',
-        resample=False,
-        zorder=2
-    )
-
-    ax.set_aspect('equal', adjustable='box')
-
-    _add_opacity_legend(ax, divider)
+    
+    tiles_with_cells = avg_df[avg_df["count"] > 0]
+    
+    for _, row in tiles_with_cells.iterrows():
+        x = float(row["x"])
+        y = float(row["y"])
+        
+        if x + tile_size < x_min_disp or x > x_max_disp:
+            continue
+        if y + tile_size < y_min_disp or y > y_max_disp:
+            continue
+        
+        rgba_color = to_rgba(row["color_hex"], row["alpha"])
+        
+        y_inverted = y_max_disp + y_min_disp - y - tile_size
+        rect = patches.Rectangle(
+            (x, y_inverted),
+            tile_size,
+            tile_size,
+            facecolor=rgba_color,
+            edgecolor='none',
+            zorder=2
+        )
+        ax.add_patch(rect)
+    
+    alpha_desc_low = avg_df["alpha_description_low"].iloc[0] if "alpha_description_low" in avg_df.columns else "Low alpha (transparent)"
+    alpha_desc_low = avg_df["alpha_description_low"].iloc[0] if "alpha_description_low" in avg_df.columns else "Low alpha (transparent)"
+    alpha_desc_high = avg_df["alpha_description_high"].iloc[0] if "alpha_description_high" in avg_df.columns else "High alpha (opaque)"
+    _add_opacity_legend(ax, divider, alpha_desc_low, alpha_desc_high)
 
     if image_target_mask is not None:
         sm = plt.cm.ScalarMappable(cmap=REL_CMAP)
@@ -348,7 +504,7 @@ def plot_grid_from_table(avg_df, image_target_mask,
     else:
         plot_compass_legend(ax)
 
-def _add_opacity_legend(ax, divider):
+def _add_opacity_legend(ax, divider, low_label="Low alpha (transparent)", high_label="High alpha (opaque)"):
     sm = plt.cm.ScalarMappable(cmap=get_cmap("binary"))
     sm.set_clim(0, 1)
 
@@ -356,7 +512,7 @@ def _add_opacity_legend(ax, divider):
     cbar = plt.colorbar(sm, cax=cax_opacity, orientation='horizontal')
 
     cbar.set_ticks([0, 1])
-    cbar.set_ticklabels(['Less cells, shorter extensions (transparent)', 'More cells, longer extensions (opaque)'])
+    cbar.set_ticklabels([low_label, high_label])
     cbar.set_label("Opacity")
     # cbar.ax.tick_params(pad=0)
     cbar.ax.xaxis.get_majorticklabels()[0].set_horizontalalignment('left')
