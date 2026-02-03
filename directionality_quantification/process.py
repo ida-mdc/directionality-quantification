@@ -238,9 +238,11 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
 
     color_strategy.compute_color_and_alpha(rows, is_relative, tile_size)
     alpha_desc_low, alpha_desc_high = color_strategy.get_alpha_description()
+    strategy_name = color_strategy.__class__.__name__
     for r in rows:
         r["alpha_description_low"] = alpha_desc_low
         r["alpha_description_high"] = alpha_desc_high
+        r["color_strategy"] = strategy_name
 
     return pd.DataFrame(rows)
 

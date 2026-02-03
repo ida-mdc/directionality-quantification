@@ -351,29 +351,103 @@
             let angles = data.map(d => safeValue(d['Relative angle'])).filter(v => v !== null);
             let angleType = 'Relative';
             let angleTitle = 'Relative Angle Distribution';
+            let isRelative = true;
             
             // If no relative angle data, fall back to absolute angle
             if (angles.length === 0) {
                 angles = data.map(d => safeValue(d['Absolute angle'])).filter(v => v !== null);
                 angleType = 'Absolute';
                 angleTitle = 'Absolute Angle Distribution';
+                isRelative = false;
             }
             
             if (angles.length > 0) {
                 // Update title
                 document.getElementById('angle-chart-title').textContent = angleTitle;
                 
-                Plotly.newPlot('angle-chart', [{
-                    x: angles,
-                    type: 'histogram',
-                    marker: { color: '#8b5cf6' },
-                    nbinsx: 36
-                }], {
-                    title: angleTitle,
-                    xaxis: { title: `${angleType} Angle (degrees)` },
-                    yaxis: { title: 'Count' },
-                    margin: {t:30, b:40, l:50, r:20}
-                });
+                // For relative angles, use custom red-cyan-blue colorscale matching the Python colormap
+                let markerConfig = { nbinsx: 36 };
+                
+                if (isRelative) {
+                    // Create custom colorscale: red (0°) -> cyan (90°) -> blue (180°)
+                    const angleMin = Math.min(...angles);
+                    const angleMax = Math.max(...angles);
+                    const angleRange = angleMax - angleMin;
+                    
+                    // Create colorscale array for Plotly: [value, color] pairs normalized to 0-1
+                    const colorscale = [
+                        [0, 'rgb(255, 0, 0)'],    // Red at 0° (towards target)
+                        [0.5, 'rgb(0, 255, 255)'], // Cyan at 90° (parallel)
+                        [1, 'rgb(0, 0, 255)']     // Blue at 180° (away from target)
+                    ];
+                    
+                    // Use histogram2d with custom colorscale to color bins by angle value
+                    const nBins = 36;
+                    const binSize = angleRange / nBins;
+                    const binEdges = Array.from({length: nBins + 1}, (_, i) => angleMin + i * binSize);
+                    const binCenters = Array.from({length: nBins}, (_, i) => angleMin + (i + 0.5) * binSize);
+                    
+                    // Count values in each bin
+                    const counts = Array(nBins).fill(0);
+                    angles.forEach(angle => {
+                        let binIdx = Math.min(Math.floor((angle - angleMin) / binSize), nBins - 1);
+                        if (angle === angleMax) binIdx = nBins - 1;
+                        counts[binIdx]++;
+                    });
+                    
+                    // Create colored bars
+                    const traces = binCenters.map((center, i) => {
+                        // Normalize angle to 0-1 for colorscale lookup
+                        const normalizedAngle = (center - angleMin) / angleRange;
+                        // Find color from colorscale
+                        let color;
+                        if (normalizedAngle <= 0.5) {
+                            // Interpolate between red and cyan
+                            const t = normalizedAngle * 2;
+                            const r = Math.round(255 * (1 - t));
+                            const g = Math.round(255 * t);
+                            const b = Math.round(255 * t);
+                            color = `rgb(${r}, ${g}, ${b})`;
+                        } else {
+                            // Interpolate between cyan and blue
+                            const t = (normalizedAngle - 0.5) * 2;
+                            const r = 0;
+                            const g = Math.round(255 * (1 - t));
+                            const b = 255;
+                            color = `rgb(${r}, ${g}, ${b})`;
+                        }
+                        
+                        return {
+                            x: [center],
+                            y: [counts[i]],
+                            type: 'bar',
+                            marker: { color: color, line: { color: color, width: 0 } },
+                            width: binSize * 0.9,
+                            showlegend: false
+                        };
+                    });
+                    
+                    Plotly.newPlot('angle-chart', traces, {
+                        title: angleTitle + '<br><span style="font-size: 0.7em; color: #666;">0° = Towards target (red), 90° = Parallel (cyan), 180° = Away from target (blue)</span>',
+                        xaxis: { title: `${angleType} Angle (degrees)`, range: [angleMin - binSize/2, angleMax + binSize/2] },
+                        yaxis: { title: 'Count' },
+                        margin: {t:60, b:40, l:50, r:20},
+                        bargap: 0
+                    });
+                } else {
+                    // Absolute angle: use default purple color
+                    Plotly.newPlot('angle-chart', [{
+                        x: angles,
+                        type: 'histogram',
+                        marker: { color: '#8b5cf6' },
+                        nbinsx: 36
+                    }], {
+                        title: angleTitle,
+                        xaxis: { title: `${angleType} Angle (degrees)` },
+                        yaxis: { title: 'Count' },
+                        margin: {t:30, b:40, l:50, r:20}
+                    });
+                }
             }
             
             // Relative angle vs distance to target (heatmap instead of scatter)
@@ -413,6 +487,16 @@
                             heatmapData[angleBin][distBin]++;
                         });
                         
+                        // Create custom red-cyan-blue colorscale for relative angles
+                        const relAngleColorscale = [
+                            [0, 'rgb(255, 0, 0)'],    // Red at 0° (towards target)
+                            [0.5, 'rgb(0, 255, 255)'], // Cyan at 90° (parallel)
+                            [1, 'rgb(0, 0, 255)']     // Blue at 180° (away from target)
+                        ];
+                        
+                        // For the heatmap, we'll use a custom colorscale that encodes angle in the y-axis
+                        // But the z-values are counts, so we'll use a sequential colorscale for counts
+                        // and add angle information in the title
                         Plotly.newPlot('relative-angle-distance-chart', [{
                             z: heatmapData,
                             x: Array.from({length: nBinsX}, (_, i) => distMin + (i + 0.5) * distBinSize),
@@ -421,10 +505,10 @@
                             colorscale: 'Viridis',
                             colorbar: { title: 'Count' }
                         }], {
-                            title: 'Relative Angle vs Distance to Target',
+                            title: 'Relative Angle vs Distance to Target<br><span style="font-size: 0.7em; color: #666;">0° = Towards target (red), 90° = Parallel (cyan), 180° = Away from target (blue)</span>',
                             xaxis: { title: distanceCol.includes('um') ? 'Distance to Target (µm)' : 'Distance to Target (px)' },
                             yaxis: { title: 'Relative Angle (degrees)' },
-                            margin: {t:30, b:40, l:50, r:50}
+                            margin: {t:60, b:40, l:50, r:50}
                         });
                     }
                 }

@@ -21,7 +21,15 @@ from directionality_quantification.plot_utils import _draw_scaled_arrow_aa, appl
 
 REL_NORM  = Normalize(0, 180)
 ABS_NORM  = Normalize(0, 360)
-REL_CMAP = get_cmap("coolwarm_r")
+# Use a custom colormap with distinct colors: red -> cyan -> blue
+# Red (0°) = towards target (matches target color)
+# Cyan (90°) = parallel (very distinct from red and blue)
+# Blue (180°) = away from target
+from matplotlib.colors import LinearSegmentedColormap
+REL_CMAP = LinearSegmentedColormap.from_list('red_cyan_blue', 
+    [(1.0, 0.0, 0.0),  # Red at 0° (towards target)
+     (0.0, 1.0, 1.0),  # Cyan at 90° (parallel) - very distinct
+     (0.0, 0.0, 1.0)]) # Blue at 180° (away from target)
 ABS_CMAP = get_cmap("hsv")
 
 
@@ -492,13 +500,26 @@ def plot_grid_from_table(avg_df, image_target_mask,
         sm = plt.cm.ScalarMappable(cmap=REL_CMAP)
         sm.set_clim(0, 180)
 
-        cax_angle = divider.append_axes("bottom", size="5%", pad=0.6)
+        cax_angle = divider.append_axes("bottom", size="5%", pad=0.8)
         cbar = plt.colorbar(sm, cax=cax_angle, orientation='horizontal')
 
-        cbar.set_ticks([0, 180])
-        cbar.set_ticklabels(['Towards target (0°)', 'Away from target (180°)'])
-        cbar.set_label("Angle (deg)")
+        cbar.set_ticks([0, 90, 180])
+        cbar.set_ticklabels(['Towards target (0°)', 'Parallel (90°)', 'Away from target (180°)'])
+        
+        # Check if saturation encoding is used (only for CountAlphaSaturationStrategy)
+        uses_saturation = False
+        if "color_strategy" in avg_df.columns:
+            strategy_name = avg_df["color_strategy"].iloc[0] if len(avg_df) > 0 else ""
+            uses_saturation = "CountAlphaSaturationStrategy" in str(strategy_name)
+        
+        if uses_saturation:
+            cbar.set_label("Relative Angle (deg)\nSaturation = vector strength (weak = desaturated, strong = saturated)", 
+                           labelpad=10)
+        else:
+            cbar.set_label("Relative Angle (deg)", labelpad=10)
+        
         cbar.ax.xaxis.get_majorticklabels()[0].set_horizontalalignment('left')
+        cbar.ax.xaxis.get_majorticklabels()[1].set_horizontalalignment('center')
         cbar.ax.xaxis.get_majorticklabels()[-1].set_horizontalalignment('right')
         plt.sca(ax)
     else:

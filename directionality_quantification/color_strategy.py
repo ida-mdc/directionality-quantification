@@ -131,10 +131,15 @@ class Version020ColorStrategy(ColorStrategy):
 
 class CountAlphaSaturationStrategy(ColorStrategy):
     """
-    New strategy:
+    Smart color encoding strategy:
     - Alpha: determined by number of cells (normalized)
+    - Color hue: determined by average angle (direction)
     - Color saturation: determined by strength of average vector (normalized)
-    - Color hue: determined by average angle
+    
+    With the new colormap (red-purple-blue, no white):
+    - Strong parallel movement (90°): saturated purple
+    - Weak vectors: desaturated colors (grayish but still colored)
+    - Strong directional movement: saturated red/blue
     """
     
     def get_alpha_description(self) -> Tuple[str, str]:
@@ -172,7 +177,7 @@ class CountAlphaSaturationStrategy(ColorStrategy):
             # Alpha from cell count
             alpha = min(1.0, c / max_count) * 0.9 if (max_count > 0) else 0.0
             
-            # Color: use same hue as other strategies (from colormap), adjust saturation from vector strength
+            # Color: use brightness/value to encode vector strength, keep saturation high
             if c == 0:
                 color_hex = to_hex((0, 0, 0))
             else:
@@ -187,12 +192,16 @@ class CountAlphaSaturationStrategy(ColorStrategy):
                 # Convert RGB to HSV to modify saturation
                 base_rgb = np.array(base_rgba[:3])  # Extract RGB (ignore alpha if present)
                 hsv = rgb_to_hsv(base_rgb.reshape(1, 1, 3))[0, 0]  # Convert to HSV
-                original_saturation = hsv[1]  # Preserve original saturation level
                 
                 # Modify saturation based on vector strength (normalized)
-                # Scale from 0 to original_saturation (not 1.0) to preserve exact color match at max strength
+                # Weak vectors → low saturation (grayish but still colored)
+                # Strong vectors → high saturation (vivid colors)
                 strength_ratio = min(1.0, strength / max_strength) if max_strength > 0 else 0.0
-                new_saturation = original_saturation * strength_ratio
+                
+                # Map strength to saturation: weak → 0.3 (desaturated), strong → 1.0 (fully saturated)
+                # Keep minimum saturation so weak vectors still show their hue (not pure gray)
+                min_saturation = 0.3  # Minimum saturation to preserve hue distinction
+                new_saturation = min_saturation + (1.0 - min_saturation) * strength_ratio
                 
                 # Keep original hue and value, update saturation
                 modified_hsv = np.array([hsv[0], new_saturation, hsv[2]])
