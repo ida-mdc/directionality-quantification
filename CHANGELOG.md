@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-24
+
+### Added
+
+- **Tile Filtering by Extension Length**:
+  - New `--min_extension_length` parameter to include only cells with sufficiently long extension vectors in tile statistics.
+  - Tile tables now store `min_extension_length` and `excluded_cells_below_min_extension_length` to document the threshold and how many cells were excluded per tile.
+  - Added `angle_std_deg` per tile (standard deviation of cell angles in degrees) as a measure of directional coherence.
+
+- **Simplified Color Strategies**:
+  - Replaced the previous three-strategy system with two clearer strategies:
+    - `alpha_from_count` (new default): color from average angle, opacity from cell count.
+    - `alpha_from_angle_std`: color from average angle, opacity from angular coherence (low std dev = high opacity).
+  - Strategy name and alpha legend descriptions are stored in the tile CSVs (`color_strategy`, `alpha_description_low`, `alpha_description_high`).
+
+### Changed
+
+- **Relative Angle Aggregation in Tiles**:
+  - Relative tile angles are now computed as a **simple (unweighted) average** of per‑cell relative angles (no weighting by extension length).
+
+- **Relative Angle Colormap**:
+  - Updated to a **red–white–blue** colormap for relative angles:
+    - Red (0°) = towards target
+    - White (90°) = parallel
+    - Blue (180°) = away from target
+  - This replaces the red–cyan–blue colormap introduced in 0.4.0.
+
+- **CLI Inputs**:
+  - `--input_raw` is now optional. If omitted, the labeling image is also used as the background for thumbnails and plots.
+
 ## [0.4.0] - 2026-02-03
 
 ### Added

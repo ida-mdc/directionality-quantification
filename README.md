@@ -14,6 +14,30 @@ List arguments:
 directionality-quantification --help
 ```
 
+- **Required**
+  - `--input_labeling` **(path)**: 2D label map (used for segmentation analysis; also used as background if no raw image is provided).
+
+- **Optional inputs**
+  - `--input_raw` **(path)**: 2D single‑channel raw image (TIFF). If omitted, `--input_labeling` is also used as the background for thumbnails and plots.
+  - `--input_target` **(path)**: Binary target mask; enables **relative** mode (relative angles and relative tile tables).
+  - `--input_table` **(path)**: Existing cell table; if omitted, the table is computed from the label map.
+  - `--pixel_in_micron` **(float)**: Pixel size in µm; enables physical‑unit columns and scale bars.
+  
+- **Region of interest and tiling**
+  - `--roi` **MIN_Y:MAX_Y:MIN_X:MAX_X[,...]**: One or more ROIs to crop before analysis.
+  - `--tiles` **sizes**: Comma‑separated tile sizes in pixels (e.g. `100,250,500`); generates one `average_directions_tile{size}.csv` per size.
+  - `--min_extension_length` **(float)**: Minimum extension length (in pixels) for a cell to be included in tile statistics.
+
+- **Filtering of segments (per‑cell table)**
+  - `--min_size` **(int)**: Exclude regions smaller than this area (pixels).
+  - `--max_size` **(int)**: Exclude regions larger than this area (pixels).
+
+- **Output and visualization**
+  - `--output` **(folder)**: Output directory for `cells.csv`, tile CSVs, and plots.
+  - `--output_res` **W:H**: Figure size for plots (default `12:9`).
+  - `--color_strategy` **{`alpha_from_count`,`alpha_from_angle_std`}**: Controls how tile **alpha** is computed; color hue always comes from the tile’s average angle.
+  - `--fullres`: Additionally save full‑resolution PNGs with tiles and arrows overlaid on the raw image.
+
 Example use case:
 
 ```
@@ -32,12 +56,14 @@ python -m unittest tests/test_sample.py
 
 #### **1. Parse Input Arguments**
 - The script accepts various user-defined arguments, including:
-  - Raw image and segmentation label map (required).
+  - Segmentation label map (required) and an optional raw image.
   - Optional parameters like ROIs, mask images, cell tables, and output settings.
+  - Tile sizes (`--tiles`) and minimum extension length (`--min_extension_length`) for tile-based aggregation.
 - Arguments control preprocessing, analysis filters (e.g., size thresholds), and visualization options.
 
 #### **2. Load Input Data**
-- Reads the raw microscopy image and segmentation label map using `tifffile`.
+- Reads the segmentation label map using `tifffile`.
+- If `--input_raw` is given, also reads the raw microscopy image; otherwise, the labeling image is re‑used as the background for thumbnails and visualizations.
 - Optionally, loads:
   - A binary mask for specific regions.
   - A cell table with predefined properties for analysis.
@@ -119,16 +145,21 @@ For each tile size specified, a separate CSV file is generated. These files summ
 | :--- | :--- |
 | `tile_x`, `tile_y` | The column and row index of the tile in the grid. |
 | `x`, `y` | The pixel coordinates of the top-left corner of the tile in the image. |
-| `u`, `v` | Components of the average vector. Their meaning depends on the `color_mode`: <br> • **Absolute mode**: Mean X (`u`) and Y (`v`) components of the cell vectors. <br> • **Relative mode**: Length-weighted mean relative angle in radians (`u`) and the mean cell vector length (`v`). |
-| `count` | The number of cells whose center falls within the tile. |
-| `avg_length` | The average `Length cell vector` for all cells within the tile. |
+| `u`, `v` | Components of the average vector. Their meaning depends on the `color_mode`: <br> • **Absolute mode**: Mean X (`u`) and Y (`v`) components of the cell vectors. <br> • **Relative mode**: Mean relative angle in radians (`u`, unweighted by length) and the mean cell vector length (`v`). |
+| `count` | The number of **included** cells in the tile (after applying `min_extension_length`, if set). |
+| `avg_length` | The average `Length cell vector` for all included cells within the tile. |
 | `tile_size` | The side length of the square tile in pixels. |
 | `color_mode` | The mode used for calculation, either `absolute` or `relative` (if a target mask was provided). |
 | `color_scalar_deg` | The final angle in degrees used to determine the tile's color in visualizations. |
 | `color_hex` | The hexadecimal color code representing the `color_scalar_deg`. |
-| `alpha` | The calculated transparency (0.0 to 1.0) for the tile, based on `count` and `avg_length`. |
-| `max_count` | The 90th percentile of cell counts across all tiles, used for normalizing the alpha value. |
-| `max_length` | The 90th percentile of average lengths across all tiles, used for normalizing the alpha value. |
+| `alpha` | The calculated transparency (0.0 to 1.0) for the tile (depends on the selected color strategy). |
+| `min_extension_length` | The global minimum extension length threshold used for tile aggregation (if provided). |
+| `excluded_cells_below_min_extension_length` | Number of cells in this tile that were excluded because their extension length was below `min_extension_length`. |
+| `angle_std_deg` | Standard deviation of per-cell angles in the tile (degrees), used as a measure of directional coherence. |
+| `color_strategy` | Name of the color strategy used (e.g. `alpha_from_count`, `alpha_from_angle_std`). |
+| `alpha_description_low`, `alpha_description_high` | Text labels describing what low and high opacity mean for the chosen strategy. |
+| `max_count` | The 90th percentile of cell counts across tiles, used for normalizing alpha in `alpha_from_count`. |
+| `max_angle_std_deg` | The 90th percentile of `angle_std_deg` across tiles, used for normalizing alpha in `alpha_from_angle_std`. |
 
 
 #### **3. Visualization Outputs**
