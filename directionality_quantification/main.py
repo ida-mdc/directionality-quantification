@@ -14,8 +14,15 @@ def run():
     parser = argparse.ArgumentParser(description="Analyze cell extension orientation")
 
     # Define arguments
-    parser.add_argument('--input_raw', type=str, required=True,
-                        help="The input raw data as TIFF (2D, 1 channel).")
+    parser.add_argument(
+        '--input_raw',
+        type=str,
+        required=False,
+        help=(
+            "Optional raw image as TIFF (2D, 1 channel). "
+            "If omitted, the labeling image is also used as background for thumbnails and plots."
+        ),
+    )
     parser.add_argument('--input_target', type=str, required=False,
                         help="Masked areas used for orientation calculation (optional).")
     parser.add_argument('--output', type=str, required=False,
@@ -51,9 +58,16 @@ def run():
     # Parse arguments
     args = parser.parse_args()
 
-    print('Reading raw image %s and segmentation %s..' % (args.input_raw, args.input_labeling))
-    image_raw = tifffile.imread(args.input_raw)
+    # Read labeling (always required)
     image = tifffile.imread(args.input_labeling).astype(int)
+
+    # Read raw image if provided; otherwise fall back to using the labeling as background
+    if args.input_raw:
+        print('Reading raw image %s and segmentation %s..' % (args.input_raw, args.input_labeling))
+        image_raw = tifffile.imread(args.input_raw)
+    else:
+        print('No --input_raw provided; using labeling image as raw/background for thumbnails and plots.')
+        image_raw = image.copy()
     image_target_mask = None
     image_target_distances = None
     if args.input_target is not None:
