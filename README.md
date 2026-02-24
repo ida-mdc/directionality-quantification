@@ -35,7 +35,7 @@ directionality-quantification --help
 - **Output and visualization**
   - `--output` **(folder)**: Output directory for `cells.csv`, tile CSVs, and plots.
   - `--output_res` **W:H**: Figure size for plots (default `12:9`).
-  - `--color_strategy` **{`alpha_from_count`,`alpha_from_angle_std`}**: Controls how tile **alpha** is computed; color hue always comes from the tile’s average angle.
+  - `--color_strategy` **{`alpha_from_count`,`alpha_from_angle_std`,`alpha_from_count_and_angle_std`}**: Controls how tile **alpha** is computed; color hue always comes from the tile’s average angle.
   - `--fullres`: Additionally save full‑resolution PNGs with tiles and arrows overlaid on the raw image.
 
 Example use case:
@@ -156,10 +156,29 @@ For each tile size specified, a separate CSV file is generated. These files summ
 | `min_extension_length` | The global minimum extension length threshold used for tile aggregation (if provided). |
 | `excluded_cells_below_min_extension_length` | Number of cells in this tile that were excluded because their extension length was below `min_extension_length`. |
 | `angle_std_deg` | Standard deviation of per-cell angles in the tile (degrees), used as a measure of directional coherence. |
-| `color_strategy` | Name of the color strategy used (e.g. `alpha_from_count`, `alpha_from_angle_std`). |
+| `color_strategy` | Name of the color strategy used (e.g. `alpha_from_count`, `alpha_from_angle_std`, `alpha_from_count_and_angle_std`). |
 | `alpha_description_low`, `alpha_description_high` | Text labels describing what low and high opacity mean for the chosen strategy. |
-| `max_count` | The 90th percentile of cell counts across tiles, used for normalizing alpha in `alpha_from_count`. |
-| `max_angle_std_deg` | The 90th percentile of `angle_std_deg` across tiles, used for normalizing alpha in `alpha_from_angle_std`. |
+| `max_count` | The 90th percentile of cell counts across tiles, used for normalizing alpha in `alpha_from_count` and `alpha_from_count_and_angle_std`. |
+| `max_angle_std_deg` | The 90th percentile of `angle_std_deg` across tiles, used for normalizing alpha in `alpha_from_angle_std` and `alpha_from_count_and_angle_std`. |
+
+
+### **Color strategies for tiles**
+
+All color strategies share the same **color hue**: it is always derived from the tile’s average angle (`color_scalar_deg`).
+They differ only in how they compute the **alpha** (opacity) column:
+
+- **`alpha_from_count`**  
+  - Alpha encodes **how many cells** are in a tile.  
+  - Uses the 90th percentile of tile counts (`max_count`) to normalize; more cells → more opaque.
+
+- **`alpha_from_angle_std`**  
+  - Alpha encodes **directional coherence** only.  
+  - Uses the 90th percentile of `angle_std_deg` (`max_angle_std_deg`) to normalize; low std dev (cells pointing in similar directions) → more opaque.
+
+- **`alpha_from_count_and_angle_std`**  
+  - Alpha encodes the combined **“push” strength** in the dominant direction.  
+  - High when **many cells** are present **and** their angles are coherent (low `angle_std_deg`);  
+    low when there are few cells or they point in very different directions.
 
 
 #### **3. Visualization Outputs**
