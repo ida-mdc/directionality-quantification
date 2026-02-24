@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-02-24
+
+### Added
+
+- **Combined “pull strength” color strategy**:
+  - New `alpha_from_count_and_angle_std` strategy:
+    - Color from average angle (unchanged).
+    - Alpha encodes the combined **pull strength**: many cells consistently pointing in the same direction → high opacity; few or inconsistent directions → low opacity.
+  - README updated with a dedicated section explaining all available color strategies and how they map tile statistics to opacity.
+
+
 ## [0.5.0] - 2026-02-24
 
 ### Added
