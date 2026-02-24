@@ -211,9 +211,7 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
 
         if is_relative:
             rel_rad = np.radians(cell_table.loc[idx, "Relative angle"])
-            L = cell_table.loc[idx, "Length cell vector"]
-            wsum = np.nansum(L)
-            rel_tile = (np.nansum(rel_rad * L) / wsum) if wsum > 0 else 0.0
+            rel_tile = float(np.nanmean(rel_rad)) if rel_rad.size > 0 else 0.0
             u = rel_tile
             v = float(np.nanmean(L))
             avg_length = v
