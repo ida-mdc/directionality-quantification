@@ -225,20 +225,26 @@ def build_average_directions_table(
                 "color_scalar_deg": 0.0, "color_hex": to_hex((0, 0, 0)),
                 "min_extension_length": min_extension_length,
                 "excluded_cells_below_min_extension_length": excluded_below_min,
+                "angle_std_deg": 0.0,
                 # alpha filled later by color strategy
             }
             rows.append(row)
             continue
 
         if is_relative:
+            # Relative mode: use per-cell relative angles
             rel_rad = np.radians(cell_table.loc[idx, "Relative angle"])
             rel_tile = float(np.nanmean(rel_rad)) if rel_rad.size > 0 else 0.0
             u = rel_tile
+            L = cell_table.loc[idx, "Length cell vector"]
             v = float(np.nanmean(L))
             avg_length = v
             color_scalar_deg = float(np.degrees(rel_tile))
             color_hex = to_hex(REL_CMAP(REL_NORM(color_scalar_deg)))
+            # Standard deviation of relative angles (in degrees)
+            angle_std_deg = float(np.degrees(np.nanstd(rel_rad))) if rel_rad.size > 0 else 0.0
         else:
+            # Absolute mode: aggregate from DX/DY but compute dispersion from absolute angles
             dx_bar = float(np.nanmean(cell_table.loc[idx, "DX"]))
             dy_bar = float(np.nanmean(cell_table.loc[idx, "DY"]))
             u, v = dx_bar, dy_bar
@@ -246,6 +252,8 @@ def build_average_directions_table(
             angle_deg = (np.degrees(np.arctan2(u, v))) % 360.0
             color_scalar_deg = angle_deg
             color_hex = to_hex(ABS_CMAP(ABS_NORM(angle_deg)))
+            abs_rad = np.radians(cell_table.loc[idx, "Absolute angle"])
+            angle_std_deg = float(np.degrees(np.nanstd(abs_rad))) if abs_rad.size > 0 else 0.0
 
         row = {
             "tile_x": tile_x,
@@ -262,6 +270,7 @@ def build_average_directions_table(
             "color_hex": color_hex,
             "min_extension_length": min_extension_length,
             "excluded_cells_below_min_extension_length": excluded_below_min,
+            "angle_std_deg": angle_std_deg,
         }
         rows.append(row)
 
