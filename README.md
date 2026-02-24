@@ -145,7 +145,7 @@ For each tile size specified, a separate CSV file is generated. These files summ
 | :--- | :--- |
 | `tile_x`, `tile_y` | The column and row index of the tile in the grid. |
 | `x`, `y` | The pixel coordinates of the top-left corner of the tile in the image. |
-| `u`, `v` | Components of the average vector. Their meaning depends on the `color_mode`: <br> • **Absolute mode**: Mean X (`u`) and Y (`v`) components of the cell vectors. <br> • **Relative mode**: Mean relative angle in radians (`u`, unweighted by length) and the mean cell vector length (`v`). |
+| `u`, `v` | Components of the average vector. Their meaning depends on the `color_mode`: <br> • **Absolute mode**: Mean X (`u`) and Y (`v`) components of the cell vectors. <br> • **Relative mode**: Mean relative angle in radians (`u`) and the mean cell vector length (`v`). |
 | `count` | The number of **included** cells in the tile (after applying `min_extension_length`, if set). |
 | `avg_length` | The average `Length cell vector` for all included cells within the tile. |
 | `tile_size` | The side length of the square tile in pixels. |
@@ -176,7 +176,7 @@ They differ only in how they compute the **alpha** (opacity) column:
   - Uses the 90th percentile of `angle_std_deg` (`max_angle_std_deg`) to normalize; low std dev (cells pointing in similar directions) → more opaque.
 
 - **`alpha_from_count_and_angle_std`**  
-  - Alpha encodes the combined **“push” strength** in the dominant direction.  
+  - Alpha encodes the combined **pull strength** in the dominant direction.  
   - High when **many cells** are present **and** their angles are coherent (low `angle_std_deg`);  
     low when there are few cells or they point in very different directions.
 
