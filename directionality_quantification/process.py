@@ -163,7 +163,15 @@ def region_extension_analysis(region, image_target):
     return skeleton, center_translated, maxradius, length_cell_vector, absolute_angle, relative_angle, rolling_ball_angle, orientation_vector, condition_outside, distance_to_target
 
 
-def build_average_directions_table(cell_table, shape, crop_extend, tile_size, image_target_mask, color_strategy: Optional[ColorStrategy] = None):
+def build_average_directions_table(
+    cell_table,
+    shape,
+    crop_extend,
+    tile_size,
+    image_target_mask,
+    color_strategy: Optional[ColorStrategy] = None,
+    min_extension_length: Optional[float] = None,
+):
     """
     Build average directions table with configurable color strategy.
     
@@ -195,15 +203,28 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
         y = int(tile_y * tile_size + crop_extend[0])
 
         mask = (ix == tile_x) & (iy == tile_y)
-        idx = np.where(mask.to_numpy())[0]
-        count = int(idx.size)
+        idx_all = np.where(mask.to_numpy())[0]
+        total_count = int(idx_all.size)
 
-        if count == 0:
+        # Filter cells in this tile by minimum extension length, if provided
+        if min_extension_length is not None and total_count > 0:
+            length_series = cell_table.loc[idx_all, "Length cell vector"]
+            valid_mask = length_series >= float(min_extension_length)
+            idx = idx_all[valid_mask.to_numpy()]
+        else:
+            idx = idx_all
+
+        count = int(idx.size)
+        excluded_below_min = int(total_count - count) if min_extension_length is not None else 0
+
+        if total_count == 0 or count == 0:
             row = {
                 "tile_x": tile_x, "tile_y": tile_y, "x": x, "y": y,
                 "u": 0.0, "v": 0.0, "count": 0, "avg_length": 0.0,
                 "tile_size": tile_size, "color_mode": "relative" if is_relative else "absolute",
                 "color_scalar_deg": 0.0, "color_hex": to_hex((0, 0, 0)),
+                "min_extension_length": min_extension_length,
+                "excluded_cells_below_min_extension_length": excluded_below_min,
                 # alpha filled later by color strategy
             }
             rows.append(row)
@@ -227,10 +248,20 @@ def build_average_directions_table(cell_table, shape, crop_extend, tile_size, im
             color_hex = to_hex(ABS_CMAP(ABS_NORM(angle_deg)))
 
         row = {
-            "tile_x": tile_x, "tile_y": tile_y, "x": x, "y": y,
-            "u": u, "v": v, "count": count, "avg_length": avg_length,
-            "tile_size": tile_size, "color_mode": "relative" if is_relative else "absolute",
-            "color_scalar_deg": color_scalar_deg, "color_hex": color_hex,
+            "tile_x": tile_x,
+            "tile_y": tile_y,
+            "x": x,
+            "y": y,
+            "u": u,
+            "v": v,
+            "count": count,
+            "avg_length": avg_length,
+            "tile_size": tile_size,
+            "color_mode": "relative" if is_relative else "absolute",
+            "color_scalar_deg": color_scalar_deg,
+            "color_hex": color_hex,
+            "min_extension_length": min_extension_length,
+            "excluded_cells_below_min_extension_length": excluded_below_min,
         }
         rows.append(row)
 
@@ -267,7 +298,16 @@ def write_table(cell_table_content: DataFrame, output):
             cell_table_content.to_csv(output.joinpath("cells.csv"))
 
 
-def compute_and_write_avg_dir_tables(cell_table: DataFrame, raw_image, roi, image_target_mask, tiles, output, color_strategy: Optional[ColorStrategy] = None):
+def compute_and_write_avg_dir_tables(
+    cell_table: DataFrame,
+    raw_image,
+    roi,
+    image_target_mask,
+    tiles,
+    output,
+    color_strategy: Optional[ColorStrategy] = None,
+    min_extension_length: Optional[float] = None,
+):
 
     dfs = []
 
@@ -284,7 +324,8 @@ def compute_and_write_avg_dir_tables(cell_table: DataFrame, raw_image, roi, imag
             crop_extend=roi,
             tile_size=tile_size,
             image_target_mask=image_target_mask,
-            color_strategy=color_strategy
+            color_strategy=color_strategy,
+            min_extension_length=min_extension_length,
         )
 
         dfs.append(avg_df)

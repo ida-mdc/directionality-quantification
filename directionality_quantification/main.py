@@ -41,6 +41,12 @@ def run():
                         help=f"Color strategy for rectangles. Available: {', '.join(STRATEGIES.keys())}")
     parser.add_argument('--fullres', action='store_true',
                         help="Generate full-resolution output images (requires more RAM)")
+    parser.add_argument(
+        '--min_extension_length',
+        type=float,
+        required=False,
+        help="Minimum extension length (in pixels) for a cell to be included in tile statistics."
+    )
 
     # Parse arguments
     args = parser.parse_args()
@@ -76,7 +82,16 @@ def run():
     color_strategy = get_color_strategy(args.color_strategy)
     print(f"Using color strategy: {args.color_strategy}")
 
-    avg_tables = compute_and_write_avg_dir_tables(cell_table_content, image_raw, roi, image_target_mask, args.tiles, args.output, color_strategy)
+    avg_tables = compute_and_write_avg_dir_tables(
+        cell_table_content,
+        image_raw,
+        roi,
+        image_target_mask,
+        args.tiles,
+        args.output,
+        color_strategy,
+        min_extension_length=args.min_extension_length,
+    )
 
     plot(cell_table_content, image_raw, roi, additional_rois, image_target_mask, pixel_in_micron, args.tiles,
          args.output, output_res, avg_tables, generate_fullres=args.fullres)
