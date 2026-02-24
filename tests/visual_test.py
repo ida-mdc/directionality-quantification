@@ -69,7 +69,8 @@ class TestCellExtensionOrientation(unittest.TestCase):
 
             (skeleton, center_translated, maxradius,
              length_cell_vector, absolute_angle, relative_angle,
-             rolling_ball_angle, orientation_vector, condition_outside) = region_extension_analysis(region, image_target=None)
+             rolling_ball_angle, orientation_vector, condition_outside,
+             distance_to_target) = region_extension_analysis(region, image_target=None)
 
             binary_image = region.intensity_image
             dist_map = ndimage.distance_transform_edt(binary_image)
