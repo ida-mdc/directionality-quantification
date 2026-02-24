@@ -36,7 +36,7 @@ def run():
                         help="Table of cells to analyze, with first column as label IDs.")
     parser.add_argument('--input_labeling', type=str, required=True,
                         help="Label map for segmentation analysis (2D, 1 channel).")
-    parser.add_argument('--color_strategy', type=str, default="count_alpha_saturation",
+    parser.add_argument('--color_strategy', type=str, default="alpha_from_count",
                         choices=list(STRATEGIES.keys()),
                         help=f"Color strategy for rectangles. Available: {', '.join(STRATEGIES.keys())}")
     parser.add_argument('--fullres', action='store_true',

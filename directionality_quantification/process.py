@@ -181,13 +181,13 @@ def build_average_directions_table(
         crop_extend: Crop/extend coordinates [y_min, y_max, x_min, x_max]
         tile_size: Size of tiles in pixels
         image_target_mask: Target mask image (None for absolute mode)
-        color_strategy: ColorStrategy instance. If None, uses "count_alpha_saturation" strategy.
+        color_strategy: ColorStrategy instance. If None, uses "alpha_from_count" strategy.
     
     Returns:
         DataFrame with tile data including colors and alpha values
     """
     if color_strategy is None:
-        color_strategy = get_color_strategy("count_alpha_saturation")
+        color_strategy = get_color_strategy("alpha_from_count")
     
     tiles_num_y = int(shape[0] / tile_size) + 1
     tiles_num_x = int(shape[1] / tile_size) + 1

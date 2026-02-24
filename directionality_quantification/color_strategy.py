@@ -8,11 +8,6 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple
 
 import numpy as np
-from matplotlib.colors import to_hex, hsv_to_rgb, rgb_to_hsv
-from matplotlib.pyplot import get_cmap
-from matplotlib.colors import Normalize
-
-from directionality_quantification.plot import REL_CMAP, REL_NORM, ABS_CMAP, ABS_NORM
 
 
 class ColorStrategy(ABC):
@@ -49,178 +44,93 @@ class ColorStrategy(ABC):
         return ("Low alpha (transparent)", "High alpha (opaque)")
 
 
-class AlphaFromCountAndLengthStrategy(ColorStrategy):
+class AlphaFromCountStrategy(ColorStrategy):
     """
-    Alpha from count and length strategy:
-    - Alpha: based on count and avg_length, normalized using 90th percentile
-    - Color: based on angle (hue only, full saturation)
+    Alpha from count strategy:
+    - Color: determined by average angle (precomputed in build_average_directions_table)
+    - Alpha: based only on cell count, normalized using the 90th percentile
     """
-    
-    def get_alpha_description(self) -> Tuple[str, str]:
-        return ("Less cells, shorter extensions (transparent)", "More cells, longer extensions (opaque)")
-    
-    def compute_color_and_alpha(
-        self,
-        rows: List[Dict],
-        is_relative: bool,
-        tile_size: int
-    ) -> None:
-        # Collect all counts and lengths for normalization
-        counts_all = []
-        avg_lengths_all = []
-        
-        for r in rows:
-            counts_all.append(float(r["count"]))
-            avg_lengths_all.append(float(r["avg_length"]))
-        
-        counts_all = np.asarray(counts_all, dtype=float)
-        avg_lengths_all = np.asarray(avg_lengths_all, dtype=float)
-        counts_all = counts_all[counts_all > 0]
-        avg_lengths_all = avg_lengths_all[avg_lengths_all > 0]
-        
-        max_count = float(np.nanpercentile(counts_all, 90)) if len(counts_all) > 0 else 1.0
-        max_length = float(np.nanpercentile(avg_lengths_all, 90)) if len(avg_lengths_all) > 0 else 1.0
-        
-        # Compute alpha for each row (color_hex already computed in build_average_directions_table)
-        for r in rows:
-            c = r["count"]
-            L = r["avg_length"]
-            
-            # Alpha based on count and length
-            alpha = min(1.0, c / max_count) * min(1.0, L / max_length) * 0.9 if (max_count > 0 and max_length > 0) else 0.0
-            
-            r["alpha"] = alpha
-            # color_hex already set in build_average_directions_table, keep it
-            r["max_count"] = float(max_count)
-            r["max_length"] = float(max_length)
 
-
-class Version020ColorStrategy(ColorStrategy):
-    """
-    Version 0.2.0 strategy:
-    - Alpha: based on count and avg_length, normalized using hardcoded values
-    - Color: based on angle (hue only, full saturation)
-    """
-    
-    def get_alpha_description(self) -> Tuple[str, str]:
-        return ("Less cells, shorter extensions (transparent)", "More cells, longer extensions (opaque)")
-    
-    def compute_color_and_alpha(
-        self,
-        rows: List[Dict],
-        is_relative: bool,
-        tile_size: int
-    ) -> None:
-        # Hardcoded normalization values from version 0.2.0
-        max_length = 10.0
-        max_count = tile_size * tile_size / 10000.0
-        
-        # Compute alpha for each row (color_hex already computed in build_average_directions_table)
-        for r in rows:
-            c = r["count"]
-            L = r["avg_length"]
-            
-            # Alpha based on count and length (old formula with hardcoded max values)
-            alpha = min(1.0, c / max_count) * min(1.0, L / max_length) * 0.9 if (max_count > 0 and max_length > 0) else 0.0
-            
-            r["alpha"] = alpha
-            # color_hex already set in build_average_directions_table, keep it
-            r["max_count"] = float(max_count)
-            r["max_length"] = float(max_length)
-
-
-class CountAlphaSaturationStrategy(ColorStrategy):
-    """
-    Smart color encoding strategy:
-    - Alpha: determined by number of cells (normalized)
-    - Color hue: determined by average angle (direction)
-    - Color saturation: determined by strength of average vector (normalized)
-    
-    With the new colormap (red-purple-blue, no white):
-    - Strong parallel movement (90°): saturated purple
-    - Weak vectors: desaturated colors (grayish but still colored)
-    - Strong directional movement: saturated red/blue
-    """
-    
     def get_alpha_description(self) -> Tuple[str, str]:
         return ("Fewer cells (transparent)", "More cells (opaque)")
-    
+
     def compute_color_and_alpha(
         self,
         rows: List[Dict],
         is_relative: bool,
         tile_size: int
     ) -> None:
-        # Collect all counts and vector strengths for normalization
+        # Collect all counts for normalization
         counts_all = []
-        vector_strengths_all = []
-        
         for r in rows:
             counts_all.append(float(r["count"]))
-            # Vector strength is the magnitude of (u, v)
-            strength = float(np.hypot(r["u"], r["v"]))
-            vector_strengths_all.append(strength)
-        
+
         counts_all = np.asarray(counts_all, dtype=float)
-        vector_strengths_all = np.asarray(vector_strengths_all, dtype=float)
         counts_all = counts_all[counts_all > 0]
-        vector_strengths_all = vector_strengths_all[vector_strengths_all > 0]
-        
+
         max_count = float(np.nanpercentile(counts_all, 90)) if len(counts_all) > 0 else 1.0
-        max_strength = float(np.nanpercentile(vector_strengths_all, 90)) if len(vector_strengths_all) > 0 else 1.0
-        
-        # Compute colors and alpha for each row
+
+        # Compute alpha for each row (color_hex already computed in build_average_directions_table)
         for r in rows:
-            c = r["count"]
-            strength = float(np.hypot(r["u"], r["v"]))
-            
-            # Alpha from cell count
-            alpha = min(1.0, c / max_count) * 0.9 if (max_count > 0) else 0.0
-            
-            # Color: use brightness/value to encode vector strength, keep saturation high
-            if c == 0:
-                color_hex = to_hex((0, 0, 0))
+            c = float(r["count"])
+
+            if max_count > 0 and c > 0:
+                alpha = min(1.0, c / max_count) * 0.9
             else:
-                color_scalar_deg = r["color_scalar_deg"]
-                
-                # Get base color from the same colormap as other strategies (preserves hue)
-                if is_relative:
-                    base_rgba = REL_CMAP(REL_NORM(color_scalar_deg))
-                else:
-                    base_rgba = ABS_CMAP(ABS_NORM(color_scalar_deg))
-                
-                # Convert RGB to HSV to modify saturation
-                base_rgb = np.array(base_rgba[:3])  # Extract RGB (ignore alpha if present)
-                hsv = rgb_to_hsv(base_rgb.reshape(1, 1, 3))[0, 0]  # Convert to HSV
-                
-                # Modify saturation based on vector strength (normalized)
-                # Weak vectors → low saturation (grayish but still colored)
-                # Strong vectors → high saturation (vivid colors)
-                strength_ratio = min(1.0, strength / max_strength) if max_strength > 0 else 0.0
-                
-                # Map strength to saturation: weak → 0.3 (desaturated), strong → 1.0 (fully saturated)
-                # Keep minimum saturation so weak vectors still show their hue (not pure gray)
-                min_saturation = 0.3  # Minimum saturation to preserve hue distinction
-                new_saturation = min_saturation + (1.0 - min_saturation) * strength_ratio
-                
-                # Keep original hue and value, update saturation
-                modified_hsv = np.array([hsv[0], new_saturation, hsv[2]])
-                
-                # Convert back to RGB
-                modified_rgb = hsv_to_rgb(modified_hsv.reshape(1, 1, 3))[0, 0]
-                color_hex = to_hex(modified_rgb)
-            
+                alpha = 0.0
+
             r["alpha"] = alpha
-            r["color_hex"] = color_hex
             r["max_count"] = float(max_count)
-            r["max_length"] = float(max_strength)  # Store max_strength as max_length for compatibility
+
+
+class AlphaFromAngleStdStrategy(ColorStrategy):
+    """
+    Alpha from angular standard deviation strategy:
+    - Color: determined by average angle (precomputed in build_average_directions_table)
+    - Alpha: based on angular coherence (1 - normalized std dev of angles)
+      -> Low std dev (coherent direction) = high opacity
+      -> High std dev (diverse directions) = low opacity
+    """
+
+    def get_alpha_description(self) -> Tuple[str, str]:
+        return ("High angle variability (transparent)", "Low angle variability (opaque)")
+
+    def compute_color_and_alpha(
+        self,
+        rows: List[Dict],
+        is_relative: bool,
+        tile_size: int
+    ) -> None:
+        # Collect all angle standard deviations for normalization
+        std_all = []
+        for r in rows:
+            c = float(r["count"])
+            if c > 0:
+                std_all.append(float(r.get("angle_std_deg", 0.0)))
+
+        std_all = np.asarray(std_all, dtype=float)
+        std_all = std_all[std_all > 0]
+
+        max_std = float(np.nanpercentile(std_all, 90)) if len(std_all) > 0 else 0.0
+
+        for r in rows:
+            c = float(r["count"])
+            if c == 0 or max_std <= 0.0:
+                alpha = 0.0
+            else:
+                std_deg = float(r.get("angle_std_deg", 0.0))
+                ratio = min(1.0, std_deg / max_std) if max_std > 0 else 0.0
+                coherence = 1.0 - ratio
+                alpha = coherence * 0.9
+
+            r["alpha"] = alpha
+            r["max_angle_std_deg"] = float(max_std)
 
 
 # Strategy registry
 STRATEGIES = {
-    "alpha_from_count_and_length": AlphaFromCountAndLengthStrategy,
-    "0.2.0": Version020ColorStrategy,
-    "count_alpha_saturation": CountAlphaSaturationStrategy,
+    "alpha_from_count": AlphaFromCountStrategy,
+    "alpha_from_angle_std": AlphaFromAngleStdStrategy,
 }
 
 
@@ -230,9 +140,8 @@ def get_color_strategy(name: str) -> ColorStrategy:
     
     Args:
         name: Strategy name. Options:
-            - "alpha_from_count_and_length": Alpha from count and length (percentile-based normalization)
-            - "0.2.0": Version 0.2.0 strategy (hardcoded normalization)
-            - "count_alpha_saturation": Alpha from count, saturation from strength, hue from angle
+            - "alpha_from_count": Alpha from cell count (90th percentile normalization)
+            - "alpha_from_angle_std": Alpha from angular coherence (1 - normalized std dev)
     
     Returns:
         ColorStrategy instance

@@ -21,15 +21,19 @@ from directionality_quantification.plot_utils import _draw_scaled_arrow_aa, appl
 
 REL_NORM  = Normalize(0, 180)
 ABS_NORM  = Normalize(0, 360)
-# Use a custom colormap with distinct colors: red -> cyan -> blue
-# Red (0°) = towards target (matches target color)
-# Cyan (90°) = parallel (very distinct from red and blue)
+# Use a red–white–blue colormap for relative angles:
+# Red (0°) = towards target
+# White (90°) = parallel
 # Blue (180°) = away from target
 from matplotlib.colors import LinearSegmentedColormap
-REL_CMAP = LinearSegmentedColormap.from_list('red_cyan_blue', 
-    [(1.0, 0.0, 0.0),  # Red at 0° (towards target)
-     (0.0, 1.0, 1.0),  # Cyan at 90° (parallel) - very distinct
-     (0.0, 0.0, 1.0)]) # Blue at 180° (away from target)
+REL_CMAP = LinearSegmentedColormap.from_list(
+    'red_white_blue',
+    [
+        (1.0, 0.0, 0.0),  # Red at 0° (towards target)
+        (1.0, 1.0, 1.0),  # White at 90° (parallel)
+        (0.0, 0.0, 1.0),  # Blue at 180° (away from target)
+    ],
+)
 ABS_CMAP = get_cmap("hsv")
 
 
@@ -186,15 +190,25 @@ def save_fullres_with_arrows(output, raw_image_fullres, cell_table_fullres, roi_
         raise
 
 
-def generate_target_contour(ax, image_target_mask, roi): # Added 'ax'
+def generate_target_contour(ax, image_target_mask, roi_display):
+    """
+    Draw an outline around the target area.
+    
+    The contour is drawn on TOP of tiles/other overlays by using a higher z-order.
+    """
     if image_target_mask is None:
         return
-    # y_min, y_max, x_min, x_max = roi
-    # plot_extent = [x_min, x_max, y_min, y_max]
-    # ax.contour(image_target_mask, levels=[0.5], origin='upper',
-    #            colors='red', linewidths=1.0, extent=plot_extent)
-    # cs = ax.contourf(image_target_mask, 1, hatches=['', 'O'], origin='upper', colors='none', extent=plot_extent) # Changed to ax.
-    # cs.set_edgecolor((1, 0, 0.2, 1))
+    y_min, y_max, x_min, x_max = roi_display
+    plot_extent = [x_min, x_max, y_min, y_max]
+    ax.contour(
+        image_target_mask,
+        levels=[0.5],
+        origin='upper',
+        colors='red',
+        linewidths=1.0,
+        extent=plot_extent,
+        zorder=3,
+    )
 
 def plot_all_directions(output, output_res, cell_table, bg_image_display,
                         roi, additional_rois, additional_roi_colors,
@@ -429,12 +443,17 @@ def plot_average_directions(output_res, avg_df, bg_image,
         scalebar = ScaleBar(pixel_in_micron_display, 'um', location='upper right', color='white', box_color='black')
         ax.add_artist(scalebar)
 
-    plot_grid_from_table(avg_df, image_target_mask,
-                         roi,  # Pass the SMALL roi for data logic
-                         roi_display,  # Pass the BIG roi for extent/limits
-                         divider)
+    plot_grid_from_table(
+        avg_df,
+        image_target_mask,
+        roi,          # SMALL roi for data logic
+        roi_display,  # BIG roi for extent/limits
+        divider,
+    )
 
+    # Draw target outline ON TOP of tiles
     if image_target_mask is not None:
+        generate_target_contour(ax, image_target_mask, roi_display)
         plot_target_legend(ax)
 
     plt.margins(0, 0)
